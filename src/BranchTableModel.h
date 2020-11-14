@@ -8,17 +8,16 @@ namespace plz2branch {
 class BranchTableModel: public QAbstractTableModel {
 	Q_OBJECT
 private:
-	typedef enum { CN_ID=0, CN_LAT=1, CN_LON=2, CN_NAME=3, CN_PLZ=4, CN_SHOW=5, CN_COL_COUNT=CN_SHOW+1} ColNames;
+	typedef enum { CN_ID=0, CN_SHOW, CN_LAT, CN_LON, CN_NAME, CN_PLZ, CN_NUM_PLZ, CN_COL_COUNT} ColNames;
 public:
 	BranchTableModel(QObject * parent, std::shared_ptr<State> state);
-	virtual ~BranchTableModel();
-	virtual int rowCount(const QModelIndex&) const;
-	virtual int columnCount(const QModelIndex&) const;
-	virtual QVariant data(const QModelIndex & index, int role) const;
-	virtual QVariant headerData(int section, Qt::Orientation orientation, int role) const;
-	virtual Qt::ItemFlags flags(const QModelIndex& /*index*/) const {
-		return (Qt::ItemIsEnabled);
-	}
+	~BranchTableModel() override;
+	int rowCount(const QModelIndex&) const override;
+	int columnCount(const QModelIndex&) const override;
+	QVariant data(const QModelIndex & index, int role) const override;
+	QVariant headerData(int section, Qt::Orientation orientation, int role) const override;
+	Qt::ItemFlags flags(const QModelIndex& /*index*/) const override;
+	bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole) override;
 public Q_SLOTS:
 	void doubleClicked(const QModelIndex&);
 	void headerClicked(int);

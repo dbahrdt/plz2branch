@@ -8,6 +8,7 @@
 #include <QLabel>
 #include <QFileDialog>
 #include <QPushButton>
+#include <QMenuBar>
 #include <iostream>
 #include <future>
 
@@ -111,6 +112,12 @@ m_bc(new detail::BackgroundComputer(this, state))
 	
 	connect(m_state.get(), SIGNAL(textInfo(QString const&)), m_infoLabel, SLOT(setText(QString)));
 	
+	auto fileMenu = menuBar()->addMenu("&File");
+	QAction * saveAction = new QAction("&Save", this);
+	fileMenu->addAction(saveAction);
+	
+	connect(saveAction, SIGNAL(triggered(bool)), this, SLOT(saveAssignments()));
+	
 	QWidget * centralWidget = new QWidget(this);
 	centralWidget->setLayout(mainLayout);
 	setCentralWidget(centralWidget);
@@ -148,7 +155,8 @@ void MainWindow::toggleBranch(BranchId brId) {
 }
 
 void MainWindow::saveAssignments() {
-	QString fileName = QFileDialog::getOpenFileName(this, tr("Open destiation"), "/", tr("Text Files (*.txt)"));
+	std::cout << "Saving assignments" << std::endl;
+	QString fileName = QFileDialog::getSaveFileName(this, tr("Open destiation"), "/", tr("Text Files (*.txt)"));
 	std::ofstream out;
 	out.open(fileName.toStdString());
 	if (out.is_open()) {

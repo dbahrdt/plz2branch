@@ -31,6 +31,10 @@ QVariant BranchTableModel::headerData(int section, Qt::Orientation orientation, 
 				return QVariant("Longitude");
 			case (CN_NAME):
 				return QVariant("Name");
+			case CN_PLZ:
+				return QVariant("PLZ");
+			case CN_NUM_PLZ:
+				return QVariant("#PLZ");
 			case (CN_SHOW):
 				return QVariant("Show");
 			default:
@@ -71,6 +75,10 @@ QVariant BranchTableModel::data(const QModelIndex& index, int role) const {
 			}
 			return QVariant( QString::fromStdString(ss.str()) );
 		}
+		case CN_NUM_PLZ:
+		{
+			return QVariant((uint32_t) info.assignedRegions.size());
+		}
 		case CN_SHOW:
 		{
 			std::shared_lock<std::shared_mutex> lck(m_state->dataMtx);
@@ -86,6 +94,33 @@ QVariant BranchTableModel::data(const QModelIndex& index, int role) const {
 		}
 	}
 	return QVariant();
+}
+
+bool
+BranchTableModel::setData(const QModelIndex &index, const QVariant &value, int role) {
+	if (role == Qt::EditRole) {
+		int col = index.column();
+		int row = index.row();
+		if (col == CN_NAME) {
+			std::unique_lock<std::shared_mutex> lck(m_state->dataMtx);
+			if (row < m_state->branches.size()) {
+				m_state->branches.at(row).name = value.toString();
+				return true;
+			}
+		}
+	}
+	return QAbstractTableModel::setData(index, value, role);
+}
+
+Qt::ItemFlags
+BranchTableModel::flags(const QModelIndex &index) const
+{
+	int col = index.column();
+
+	if (col == CN_NAME) {
+		return QAbstractItemModel::flags(index) | Qt::ItemIsEditable;
+	}
+	return QAbstractTableModel::flags(index);
 }
 
 void BranchTableModel::resetData() {
