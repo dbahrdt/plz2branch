@@ -233,13 +233,13 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 void
 State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 	emit_textInfo("Computing branch distances");
-	std::vector<std::vector<Distance>> branchDistances;
+	std::vector<std::vector<Distance>> branchDistances(branches.size());
 	{
 		std::shared_lock<std::shared_mutex> lck(dataMtx);
 		#pragma omp parallel for schedule(dynamic)
 		for(std::size_t i = 0; i < branches.size(); ++i) {
 			Branch const & branch = branches.at(i);
-			branchDistances.emplace_back( branchDistance(BranchId{.value=uint32_t(i)}, dwc) );
+			branchDistances.at(i) = branchDistance(BranchId{.value=uint32_t(i)}, dwc);
 			emit_textInfo(QString("Finished computing distances for branch %1").arg(i));
 		}
 	}
