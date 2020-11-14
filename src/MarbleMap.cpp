@@ -26,19 +26,16 @@ MyLockableBaseLayer(renderPos, zVal, std::move(state))
 {}
 
 bool MarbleMap::MyNodesLayer::render(Marble::GeoPainter* painter, Marble::ViewportParams*, const QString&, Marble::GeoSceneLayer*) {	
-	painter->setBrush(Qt::BrushStyle::SolidPattern);
+
 	
 	std::shared_lock<std::shared_mutex> lck(state().dataMtx);
 	for(uint32_t branchId : state().enabledBranches) {
-	
-		Marble::GeoDataCoordinates gp;
-		{
-			std::shared_lock<std::shared_mutex> lck(state().dataMtx);
-			Branch const & bri = state().branches.at(branchId);
-			painter->setPen(bri.color);
-			gp = Marble::GeoDataCoordinates(bri.coord.lon(), bri.coord.lat(), 0.0, Marble::GeoDataCoordinates::Degree);
-		}
-		painter->drawEllipse(gp, 10, 10);
+		Branch const & bri = state().branches.at(branchId);
+		painter->setPen(bri.color);
+		painter->setBrush(QBrush(bri.color, Qt::BrushStyle::SolidPattern));
+		
+		Marble::GeoDataCoordinates gp(bri.coord.lon(), bri.coord.lat(), 0.0, Marble::GeoDataCoordinates::Degree);
+		painter->drawEllipse(gp, 20, 20);
 		painter->drawText(gp, QString::number(branchId));
 	}
 	return true;
@@ -54,22 +51,18 @@ MarbleMap::MyGeometryLayer::~MyGeometryLayer() {}
 
 bool MarbleMap::MyGeometryLayer::render(Marble::GeoPainter* painter, Marble::ViewportParams* viewport, const QString&
  renderPos, Marble::GeoSceneLayer* layer) {
-	
-	QPen pen(( QColor(Qt::blue) ));
-	QColor fillColor(0, 0, 255, 50);
-	QBrush brush(fillColor);
-	
-	painter->setBrush(Qt::BrushStyle::SolidPattern);
-	
 	std::shared_lock<std::shared_mutex> lck(state().dataMtx);
 	for(uint32_t branchId : state().enabledBranches) {
-		std::shared_lock<std::shared_mutex> lck(state().dataMtx);
 		Branch const & bri = state().branches.at(branchId);
 		painter->setPen(bri.color);
-		for(auto rId : bri.assignedRegions) {
+		painter->setBrush(QBrush(bri.color, Qt::Dense7Pattern));
+		for(const auto & [rId, rDist] : bri.assignedRegions) {
 			sserialize::spatial::GeoRect bbox = state().regionInfo.at(rId.value).shape->boundary();
 			Marble::GeoDataLatLonBox lb(bbox.maxLat(), bbox.minLat(), bbox.maxLon(), bbox.minLon(), Marble::GeoDataCoordinates::Degree);
 			painter->drawRect(lb.center(), lb.width(Marble::GeoDataCoordinates::Degree), lb.height(Marble::GeoDataCoordinates::Degree), true);
+			
+			auto msg = QString("plz=%1, br=%2, d=%3").arg(QString::number(state().regionInfo.at(rId.value).plz), QString::number(branchId), QString::number(rDist.value));
+			painter->drawText(lb.center(), msg);
 		}
 	}
 	return true;
@@ -82,9 +75,11 @@ MarbleWidget(parent),
 m_state(state)
 {
 	m_nodesLayer = new MyNodesLayer({"HOVERS_ABOVE_SURFACE"}, 0.0, state);
+	m_plzLayer = new MyGeometryLayer({"HOVERS_ABOVE_SURFACE"}, 0.0, state);
 	
 	QAction * branchCreateME = new QAction("Create branch", this);
 	
+	addLayer(m_plzLayer);
 	addLayer(m_nodesLayer);
 	
 	popupMenu()->addAction(Qt::MouseButton::RightButton, branchCreateME);
@@ -99,7 +94,9 @@ m_state(state)
 
 MarbleMap::~MarbleMap() {
 	removeLayer(m_nodesLayer);
+	removeLayer(m_plzLayer);
 	delete m_nodesLayer;
+	delete m_plzLayer;
 }
 
 void MarbleMap::dataChanged() {

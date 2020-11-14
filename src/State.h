@@ -65,7 +65,7 @@ struct Branch {
 	QColor color{Qt::green};
 	sserialize::spatial::GeoPoint coord;
 	memgraph::Graph::NodeId nodeId;
-	std::vector<RegionId> assignedRegions;
+	std::vector<std::pair<RegionId, Distance>> assignedRegions;
 	std::vector<Distance> dist; //regionId->distance
 };
 

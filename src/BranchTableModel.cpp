@@ -66,8 +66,8 @@ QVariant BranchTableModel::data(const QModelIndex& index, int role) const {
 		case CN_PLZ:
 		{
 			std::stringstream ss;
-			for(auto x : info.assignedRegions) {
-				ss << x.value << ',';
+			for(auto const & [rId, rDist] : info.assignedRegions) {
+				ss << m_state->regionInfo.at(rId.value).plz << ": " << rDist.value  << ", ";
 			}
 			return QVariant( QString::fromStdString(ss.str()) );
 		}

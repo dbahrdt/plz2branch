@@ -82,7 +82,7 @@ State::nodeDistances(memgraph::Graph::NodeId const & nId) const {
 	std::vector<double> distance(graph.nodeCount(), NoDistance);
 	struct QueueElement {
 		Graph::NodeId nId;
-		double distance;
+		double distance{std::numeric_limits<double>::max()};
 		QueueElement(Graph::NodeId const & nid, double distance) : nId(nid), distance(distance) {}
 		QueueElement(QueueElement const &) = default;
 		QueueElement & operator=(QueueElement const&) = default;
@@ -101,6 +101,7 @@ State::nodeDistances(memgraph::Graph::NodeId const & nId) const {
 			//check all edges and insert the ones with smaller updated distance in our queue
 			for(auto eIt(graph.edgesBegin(qe.nId)), eEnd(graph.edgesEnd(qe.nId)); eIt != eEnd; ++eIt) {
 				auto const & edge = *eIt;
+				assert(edge.source == qe.nId);
 				if (qe.distance + weight(edge) < distance.at(edge.target)) {
 					pq.emplace(Graph::NodeId(edge.target), qe.distance + weight(edge));
 				}
@@ -140,6 +141,9 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 			RegionId nodeRegion = node2Region.at(i);
 			if (!nodeRegion.valid()) {
 				continue;
+			}
+			if (i == branch.nodeId) {
+				std::cout << "Node distance for branch " << branchId.value << ": " << nodeDist[i] << std::endl;
 			}
 			distances.at(nodeRegion.value).update(nodeDist[i]);
 		}
@@ -182,8 +186,10 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 			if (!nodeRegion.valid()) {
 				continue;
 			}
-			distances.at(nodeRegion.value).fetch_add(nodeDist.at(i), std::memory_order_relaxed);
-			numNodes.at(nodeRegion.value).fetch_add(1, std::memory_order_relaxed);
+			if (nodeDist.at(i) != std::numeric_limits<double>::max()) {
+				distances.at(nodeRegion.value).fetch_add(nodeDist.at(i), std::memory_order_relaxed);
+				numNodes.at(nodeRegion.value).fetch_add(1, std::memory_order_relaxed);
+			}
 		}
 		for(std::size_t i(0), s(branchDistance.size()); i < s; ++i) {
 			branchDistance[i].value = distances[i].load()/numNodes.at(i).load();
@@ -205,7 +211,10 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 				continue;
 			}
 			auto nd = nodeDist.at(i);
-			distances.at(nodeRegion.value).syncedWithoutNotify([&](auto & v) { v.push_back(nd); });
+			
+			if (nd != std::numeric_limits<double>::max()) {
+				distances.at(nodeRegion.value).syncedWithoutNotify([&](auto & v) { v.push_back(nd); });
+			}
 		}
 		for(std::size_t i(0), s(branchDistance.size()); i < s; ++i) {
 			branchDistance[i].value = sserialize::statistics::median(distances.at(i).unsyncedValue().begin(), distances.at(i).unsyncedValue().end(), double(0));
@@ -214,6 +223,10 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 	break;
 	}//end switch
 	
+	{
+		RegionId brRId = node2Region.at(branch.nodeId);
+		std::cout << "Branch " << branchId.value << " is in plz " << regionInfo.at(brRId.value).plz << " with distance " << branchDistance.at(brRId.value).value  << std::endl;
+	}
 	return branchDistance;
 }
 
@@ -223,10 +236,11 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 	std::vector<std::vector<Distance>> branchDistances;
 	{
 		std::shared_lock<std::shared_mutex> lck(dataMtx);
-		for(std::size_t i(0), s(branches.size()); i < s; ++i) {
+		#pragma omp parallel for schedule(dynamic)
+		for(std::size_t i = 0; i < branches.size(); ++i) {
 			Branch const & branch = branches.at(i);
-			emit_textInfo(QString("Computing distances from branch %1").arg(i));
 			branchDistances.emplace_back( branchDistance(BranchId{.value=uint32_t(i)}, dwc) );
+			emit_textInfo(QString("Finished computing distances for branch %1").arg(i));
 		}
 	}
 	emit_textInfo("Finished computing branch distances");
@@ -240,34 +254,33 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 	//For each plz, compute the branch that is closest
 	for(uint32_t plzId(0), s(regionInfo.size()); plzId < s; ++plzId) {
 		double bestDist = std::numeric_limits<double>::max();
-		BranchId bestId{.value = 0};
-		for(BranchId brId{.value=0}; s < branches.size(); ++brId.value) {
-			double branchPlzDist = branchDistances.at(brId.value).at(plzId).value;
+		uint32_t bestId = std::numeric_limits<uint32_t>::max();
+		for(uint32_t brId(0); brId < branches.size(); ++brId) {
+			double branchPlzDist = branchDistances.at(brId).at(plzId).value;
 			if (branchPlzDist < bestDist) {
 				bestId = brId;
 				bestDist = branchPlzDist;
 			}
 		}
-		branches.at(bestId.value).assignedRegions.push_back(RegionId{.value=plzId});
+		branches.at(bestId).assignedRegions.emplace_back(RegionId{.value=plzId}, Distance{.value=bestDist});
+		if (node2Region.at(branches.at(bestId).nodeId).value == plzId) {
+			std::cout << "Assigning branch " << bestId << " to its sourrounding plz " << regionInfo.at(plzId).plz << std::endl; 
+		}
 	}
 	emit_textInfo("Finished computing closest branch for each PLZ");
 	//Color the branches
-	std::array<Qt::GlobalColor, 12> colors{
+	std::array<Qt::GlobalColor, 8> colors{
 		Qt::red,
-		Qt::green,
 		Qt::blue,
 		Qt::darkRed,
 		Qt::darkGreen,
 		Qt::darkBlue,
-		Qt::cyan,
-		Qt::magenta,
-		Qt::yellow,
 		Qt::darkCyan,
 		Qt::darkMagenta,
 		Qt::darkYellow
 	};
 	for(std::size_t i(0), s(branches.size()); i < s; ++i) {
-		branches[i].color = QColor(colors.at(i%colors.size()));
+		branches.at(i).color = QColor(colors.at(i%colors.size()));
 	}
 	emit_textInfo("Finished computing branch assignments");
 }
@@ -279,8 +292,8 @@ State::writeBranchAssignments(std::ostream & out) {
 		out << "{\n\tname:" << branch.name.toStdString() << ",\n";
 		out << "\tid:" << branch.name.toStdString() << ",\n";
 		out << "\tplz: [";
-		for(auto const & x : branch.assignedRegions) {
-			RegionInfo const & ri = regionInfo.at(x.value);
+		for(auto const & [rId, rDist] : branch.assignedRegions) {
+			RegionInfo const & ri = regionInfo.at(rId.value);
 			out << ri.plz << ", ";
 		}
 		out << "]\n}";
@@ -290,11 +303,12 @@ State::writeBranchAssignments(std::ostream & out) {
 void
 State::createBranch(double lat, double lon) {
 	Branch branch;
-	branch.coord = sserialize::spatial::GeoPoint(lat, lon);
 	{
 		std::shared_lock<std::shared_mutex> lck;
-		branch.nodeId = closestNode(branch.coord);
+		branch.nodeId = closestNode(sserialize::spatial::GeoPoint(lat, lon));
 	}
+	branch.coord.lat() = graph.nodeInfo(branch.nodeId).lat;
+	branch.coord.lon() = graph.nodeInfo(branch.nodeId).lon;
 	{
 		std::unique_lock<std::shared_mutex> lck;
 		branches.push_back(branch);
