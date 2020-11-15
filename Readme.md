@@ -1,0 +1,9 @@
+# Input File Format
+```
+<NAME-1>
+<LATITUDE-1>
+<LONGITUDE-1>
+<NAME-2>
+<LATITUDE-2>
+<LONGITUDE-2>
+```
