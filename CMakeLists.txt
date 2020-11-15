@@ -5,6 +5,8 @@ set(CMAKE_MODULE_PATH
 	${CMAKE_SOURCE_DIR}/cmake
 )
 
+include(cmake/add_buildtype_ultra_sanitize.cmake)
+
 add_subdirectory(vendor/sserialize sserialize)
 add_subdirectory(vendor/libosmtools libosmtools)
 add_subdirectory(vendor/memgraph memgraph)
