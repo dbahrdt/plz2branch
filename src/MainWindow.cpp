@@ -27,6 +27,7 @@ BackgroundComputer::~BackgroundComputer() {}
 
 void BackgroundComputer::compute(DistanceWeightConfig const & dwc) {
 	(void) std::async(std::launch::async, [this](DistanceWeightConfig const & dwc) {
+		std::cout << "Computing branch assignments in thread " << std::this_thread::get_id() << std::endl;
 		m_state->computeBranchAssignments(dwc);
 		finished();
 	}, dwc);
@@ -113,9 +114,12 @@ m_bc(new detail::BackgroundComputer(this, state))
 	connect(m_state.get(), SIGNAL(textInfo(QString const&)), m_infoLabel, SLOT(setText(QString)));
 	
 	auto fileMenu = menuBar()->addMenu("&File");
+	QAction * openAction = new QAction("&Open", this);
+	fileMenu->addAction(openAction);
 	QAction * saveAction = new QAction("&Save", this);
 	fileMenu->addAction(saveAction);
 	
+	connect(openAction, SIGNAL(triggered(bool)), this, SLOT(loadFile()));
 	connect(saveAction, SIGNAL(triggered(bool)), this, SLOT(saveAssignments()));
 	
 	QWidget * centralWidget = new QWidget(this);
@@ -162,6 +166,22 @@ void MainWindow::saveAssignments() {
 	if (out.is_open()) {
 		m_state->writeBranchAssignments(out);
 		out.close();
+	}
+	else {
+		QMessageBox msgBox;
+		msgBox.setText("Could not open file: " + fileName);
+		msgBox.exec();
+	}
+}
+
+void MainWindow::loadFile() {
+	std::cout << "Load branches" << std::endl;
+	QString fileName = QFileDialog::getOpenFileName(this, tr("Open destiation"), "/", tr("Text Files (*.txt)"));
+	std::ifstream in;
+	in.open(fileName.toStdString());
+	if (in.is_open()) {
+		m_state->createBranches(in);
+		in.close();
 	}
 	else {
 		QMessageBox msgBox;

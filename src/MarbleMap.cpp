@@ -57,11 +57,11 @@ bool MarbleMap::MyGeometryLayer::render(Marble::GeoPainter* painter, Marble::Vie
 		painter->setPen(bri.color);
 		painter->setBrush(QBrush(bri.color, Qt::Dense7Pattern));
 		for(const auto & [rId, rDist] : bri.assignedRegions) {
-			sserialize::spatial::GeoRect bbox = state().regionInfo.at(rId.value).shape->boundary();
+			sserialize::spatial::GeoRect const & bbox = state().regionInfo.at(rId.value()).bbox;
 			Marble::GeoDataLatLonBox lb(bbox.maxLat(), bbox.minLat(), bbox.maxLon(), bbox.minLon(), Marble::GeoDataCoordinates::Degree);
 			painter->drawRect(lb.center(), lb.width(Marble::GeoDataCoordinates::Degree), lb.height(Marble::GeoDataCoordinates::Degree), true);
 			
-			auto msg = QString("plz=%1, br=%2, d=%3").arg(QString::number(state().regionInfo.at(rId.value).plz), QString::number(branchId), QString::number(rDist.value));
+			auto msg = QString("plz=%1, br=%2, d=%3").arg(QString::number(state().regionInfo.at(rId.value()).plz), QString::number(branchId), QString::number(rDist.value));
 			painter->drawText(lb.center(), msg);
 		}
 	}

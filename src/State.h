@@ -16,14 +16,26 @@ struct Config {
 };
 
 struct RegionInfo {
-	std::shared_ptr<sserialize::spatial::GeoRegion> shape;
+	sserialize::spatial::GeoRect bbox;
 	uint32_t plz{std::numeric_limits<uint32_t>::max()};
 	inline bool valid() const { return plz != std::numeric_limits<uint32_t>::max(); }
 };
 
-struct RegionId {
-	uint32_t value{std::numeric_limits<uint32_t>::max()};
-	inline bool valid() const { return value != std::numeric_limits<uint32_t>::max(); }
+class RegionId {
+public:
+	RegionId() {}
+	RegionId(uint32_t v) : m_value(v) {}
+	RegionId(RegionId const&) = default;
+	RegionId & operator=(RegionId const &) = default;
+	~RegionId() {}
+public:
+	uint32_t value() const {
+		assert(valid());
+		return m_value;
+	}
+	inline bool valid() const { return m_value != std::numeric_limits<uint32_t>::max(); }
+private:
+	uint32_t m_value{std::numeric_limits<uint32_t>::max()};
 };
 
 struct BranchId {
@@ -98,7 +110,9 @@ public:
 public:
 	void writeBranchAssignments(std::ostream & out);
 public slots:
+	void createBranch(double lat, double lon, QString name);
 	void createBranch(double lat, double lon);
+	void createBranches(std::istream & data);
 signals:
 	void dataChanged();
 	void textInfo(QString const & str);

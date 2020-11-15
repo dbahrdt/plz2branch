@@ -22,7 +22,7 @@ State::importFiles() {
 	);
 	osmtools::AreaExtractor ae;
 	auto processor = [&](const std::shared_ptr<sserialize::spatial::GeoRegion> & region, osmpbf::IPrimitive & primitive) {
-		RegionInfo ri = { .shape = region, .plz = (uint32_t) std::atoi( primitive.valueByKey("postal_code").c_str() ) };
+		RegionInfo ri = { .bbox = region->boundary(), .plz = (uint32_t) std::atoi( primitive.valueByKey("postal_code").c_str() ) };
 		grt.push_back(*region, ri);
 	};
 	std::cout << "Fetching regions" << std::endl;
@@ -40,7 +40,7 @@ State::importFiles() {
 		RegionId * dest;
 		It & operator++() { return *this; }
 		It & operator*() { return *this; }
-		It & operator=(uint32_t rId) { dest->value = rId; return *this;}
+		It & operator=(uint32_t rId) { *dest = RegionId(rId); return *this;}
 	};
 	
 	node2Region.resize(graph.nodeCount());
@@ -117,6 +117,9 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 	using NodeId = memgraph::Graph::NodeId;
 	//First get the node distances
 	std::vector<double> nodeDist = nodeDistances(branch.nodeId);
+	double reachable = std::count_if(nodeDist.begin(), nodeDist.end(), [](auto && x) { return x != std::numeric_limits<double>::max(); });
+	std::cout << "Branch " << branchId.value << " reaches " << reachable << "/" << nodeDist.size() << "="
+			<< reachable/nodeDist.size()*100 << '%' << " nodes" << std::endl;
 	std::vector<Distance> branchDistance(regionInfo.size());
 	
 	auto nodeSelector = [&](NodeId const & nid) {
@@ -145,7 +148,7 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 			if (i == branch.nodeId) {
 				std::cout << "Node distance for branch " << branchId.value << ": " << nodeDist[i] << std::endl;
 			}
-			distances.at(nodeRegion.value).update(nodeDist[i]);
+			distances.at(nodeRegion.value()).update(nodeDist[i]);
 		}
 		for(std::size_t i(0), s(branchDistance.size()); i < s; ++i) {
 			branchDistance[i].value = distances[i].load();
@@ -164,7 +167,7 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 			if (!nodeRegion.valid()) {
 				continue;
 			}
-			distances.at(nodeRegion.value).update(nodeDist[i]);
+			distances.at(nodeRegion.value()).update(nodeDist[i]);
 		}
 		for(std::size_t i(0), s(branchDistance.size()); i < s; ++i) {
 			branchDistance[i].value = distances[i].load();
@@ -187,8 +190,8 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 				continue;
 			}
 			if (nodeDist.at(i) != std::numeric_limits<double>::max()) {
-				distances.at(nodeRegion.value).fetch_add(nodeDist.at(i), std::memory_order_relaxed);
-				numNodes.at(nodeRegion.value).fetch_add(1, std::memory_order_relaxed);
+				distances.at(nodeRegion.value()).fetch_add(nodeDist.at(i), std::memory_order_relaxed);
+				numNodes.at(nodeRegion.value()).fetch_add(1, std::memory_order_relaxed);
 			}
 		}
 		for(std::size_t i(0), s(branchDistance.size()); i < s; ++i) {
@@ -213,7 +216,7 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 			auto nd = nodeDist.at(i);
 			
 			if (nd != std::numeric_limits<double>::max()) {
-				distances.at(nodeRegion.value).syncedWithoutNotify([&](auto & v) { v.push_back(nd); });
+				distances.at(nodeRegion.value()).syncedWithoutNotify([&](auto & v) { v.push_back(nd); });
 			}
 		}
 		for(std::size_t i(0), s(branchDistance.size()); i < s; ++i) {
@@ -225,7 +228,12 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 	
 	{
 		RegionId brRId = node2Region.at(branch.nodeId);
-		std::cout << "Branch " << branchId.value << " is in plz " << regionInfo.at(brRId.value).plz << " with distance " << branchDistance.at(brRId.value).value  << std::endl;
+		if (brRId.valid()) {
+			std::cout << "Branch " << branchId.value << " is in plz " << regionInfo.at(brRId.value()).plz << " with distance " << branchDistance.at(brRId.value()).value  << std::endl;
+		}
+		else {
+			std::cout << "Branch " << branchId.value << " is outside of all known plz" << std::endl;
+		}
 	}
 	return branchDistance;
 }
@@ -240,6 +248,9 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 		for(std::size_t i = 0; i < branches.size(); ++i) {
 			Branch const & branch = branches.at(i);
 			branchDistances.at(i) = branchDistance(BranchId{.value=uint32_t(i)}, dwc);
+			double reachable = std::count_if(branchDistances.at(i).begin(), branchDistances.at(i).end(), [](auto && x) { return x.value != std::numeric_limits<double>::max();});
+			std::cout << "Branch " << i << " reaches " << reachable << "/" << branchDistances.at(i).size() << "="
+			<< reachable/branchDistances.at(i).size()*100 << '%' << " plz" << std::endl;
 			emit_textInfo(QString("Finished computing distances for branch %1").arg(i));
 		}
 	}
@@ -252,6 +263,8 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 	
 	emit_textInfo("Computing closest branch for each PLZ");
 	//For each plz, compute the branch that is closest
+	sserialize::ProgressInfo pinfo;
+	pinfo.begin(regionInfo.size());
 	for(uint32_t plzId(0), s(regionInfo.size()); plzId < s; ++plzId) {
 		double bestDist = std::numeric_limits<double>::max();
 		uint32_t bestId = std::numeric_limits<uint32_t>::max();
@@ -262,11 +275,16 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 				bestDist = branchPlzDist;
 			}
 		}
-		branches.at(bestId).assignedRegions.emplace_back(RegionId{.value=plzId}, Distance{.value=bestDist});
-		if (node2Region.at(branches.at(bestId).nodeId).value == plzId) {
-			std::cout << "Assigning branch " << bestId << " to its sourrounding plz " << regionInfo.at(plzId).plz << std::endl; 
+		if (bestId != std::numeric_limits<uint32_t>::max()) {
+			branches.at(bestId).assignedRegions.emplace_back(RegionId{plzId}, Distance{.value=bestDist});
 		}
+		else {
+			std::cout << "Could not find branch for plz " << regionInfo.at(plzId).plz << std::endl;
+			std::cout << "Branch 0 distance to plz: " << branchDistances.at(0).at(plzId).value << std::endl;
+		}
+// 		pinfo(plzId);
 	}
+	pinfo.end();
 	emit_textInfo("Finished computing closest branch for each PLZ");
 	//Color the branches
 	std::array<Qt::GlobalColor, 8> colors{
@@ -288,12 +306,15 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 void
 State::writeBranchAssignments(std::ostream & out) {
 	std::shared_lock<std::shared_mutex> lck(dataMtx);
-	for(Branch const & branch: branches) {
-		out << "{\n\tname:" << branch.name.toStdString() << ",\n";
-		out << "\tid:" << branch.name.toStdString() << ",\n";
+	out << std::setprecision(std::numeric_limits<double>::digits10 + 1);
+	for(std::size_t i(0), s(branches.size()); i < s; ++i) {
+		Branch const & branch = branches[i];
+		out << "{\n\tid:" << i << ",\n";
+		out << "\nname:" << branch.name.toStdString() << ",\n";
+		out << "\tcoord: (" << branch.coord.lat() << ", " << branch.coord.lon() << "),\n";
 		out << "\tplz: [";
 		for(auto const & [rId, rDist] : branch.assignedRegions) {
-			RegionInfo const & ri = regionInfo.at(rId.value);
+			RegionInfo const & ri = regionInfo.at(rId.value());
 			out << ri.plz << ", ";
 		}
 		out << "]\n}";
@@ -301,12 +322,13 @@ State::writeBranchAssignments(std::ostream & out) {
 }
 
 void
-State::createBranch(double lat, double lon) {
+State::createBranch(double lat, double lon, QString name) {
 	Branch branch;
 	{
 		std::shared_lock<std::shared_mutex> lck;
 		branch.nodeId = closestNode(sserialize::spatial::GeoPoint(lat, lon));
 	}
+	branch.name = name;
 	branch.coord.lat() = graph.nodeInfo(branch.nodeId).lat;
 	branch.coord.lon() = graph.nodeInfo(branch.nodeId).lon;
 	{
@@ -317,9 +339,26 @@ State::createBranch(double lat, double lon) {
 }
 
 void
+State::createBranch(double lat, double lon) {
+	createBranch(lat, lon, "");
+}
+
+void
+State::createBranches(std::istream & data) {
+	while (!data.eof() && data.good()) {
+		std::string name;
+		double lat, lon;
+		data >> name >> lat >> lon;
+		if (data.good()) {
+			createBranch(lat, lon, QString::fromStdString(name));
+		}
+	}
+}
+
+void
 State::emit_textInfo(QString const & str) {
 	std::cout << str.toStdString() << std::endl;
-	emit textInfo(str);
+// 	emit textInfo(str);
 }
 
 } //end namespace plz2branch

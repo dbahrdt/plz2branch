@@ -40,6 +40,7 @@ public slots:
 	void toggleBranch(BranchId brId);
 	void clearShownBranches();
 	void saveAssignments();
+	void loadFile();
 	void showTextInfo(QString const &);
 signals:
 	void dataChanged();
