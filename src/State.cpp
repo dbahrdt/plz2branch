@@ -3,6 +3,7 @@
 #include <osmtools/AreaExtractorFilters.h>
 #include <sserialize/algorithm/utilmath.h>
 #include <queue>
+#include "FileFormat.h"
 
 namespace plz2branch {
 
@@ -54,6 +55,25 @@ State::importFiles() {
 	}
 	
 	regionInfo = std::move(grt.values());
+	
+	if (cfg.plzFile.size()) {
+		std::cout << "Importing plz inhabitants file" << std::endl;
+		std::unordered_map<uint32_t, uint32_t> plz2in;
+		try {
+			plz2in = plz2inhabitants(cfg.plzFile);
+		}
+		catch (std::runtime_error const & e) {
+			std::cerr << "Could not import plz file: " << e.what() << std::endl;
+		}
+		for(auto & x : regionInfo) {
+			try {
+				x.inhabitants = plz2in.at(x.plz);
+			}
+			catch (std::out_of_range const &) {
+				std::cerr << "Did not find plz " << x.plz << " in plz2inhabitants file. Calculations will be flawed" << std::endl;
+			}
+		}
+	}
 	
 	std::cout << "Preprocessing complete" << std::endl;
 }
@@ -131,8 +151,8 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 		};
 		return true;
 	};
-		
-	switch (dwc.weightModel) {
+	
+	switch (dwc.nodeWeightModel) {
 	case DistanceWeightConfig::Min:
 	{
 		std::vector<sserialize::AtomicMin<double>> distances(regionInfo.size());
@@ -235,6 +255,27 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 			std::cout << "Branch " << branchId.value << " is outside of all known plz" << std::endl;
 		}
 	}
+	//reweight with inhabitants model
+	switch (dwc.regionWeightModel) {
+		case DistanceWeightConfig::RWM::Inhabitants:
+			for(std::size_t i(0), s(branchDistance.size()); i < s; ++i) {
+				branchDistance.at(i).value *= regionInfo.at(i).inhabitants;
+			}
+			break;
+		case DistanceWeightConfig::RWM::Equal:
+			break;
+	};
+	//reweight with number of employees
+	switch (dwc.branchWeightModel) {
+		case DistanceWeightConfig::BWM::Employees:
+			for(auto & x : branchDistance) {
+				x.value /= branch.employees;
+			}
+			break;
+		case DistanceWeightConfig::BWM::Equal:
+			break;
+	};
+	
 	return branchDistance;
 }
 
@@ -261,30 +302,57 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 		branch.assignedRegions.clear();
 	}
 	
-	emit_textInfo("Computing closest branch for each PLZ");
-	//For each plz, compute the branch that is closest
-	sserialize::ProgressInfo pinfo;
-	pinfo.begin(regionInfo.size());
-	for(uint32_t plzId(0), s(regionInfo.size()); plzId < s; ++plzId) {
-		double bestDist = std::numeric_limits<double>::max();
-		uint32_t bestId = std::numeric_limits<uint32_t>::max();
-		for(uint32_t brId(0); brId < branches.size(); ++brId) {
-			double branchPlzDist = branchDistances.at(brId).at(plzId).value;
-			if (branchPlzDist < bestDist) {
-				bestId = brId;
-				bestDist = branchPlzDist;
+	switch (dwc.branchAssignmentModel) {
+	case DistanceWeightConfig::BAM::ByDistance:
+	{
+		emit_textInfo("Computing closest branch for each PLZ");
+		//For each plz, compute the branch that is closest
+		sserialize::ProgressInfo pinfo;
+		pinfo.begin(regionInfo.size());
+		for(uint32_t plzId(0), s(regionInfo.size()); plzId < s; ++plzId) {
+			double bestDist = std::numeric_limits<double>::max();
+			uint32_t bestId = std::numeric_limits<uint32_t>::max();
+			for(uint32_t brId(0); brId < branches.size(); ++brId) {
+				double branchPlzDist = branchDistances.at(brId).at(plzId).value;
+				if (branchPlzDist < bestDist) {
+					bestId = brId;
+					bestDist = branchPlzDist;
+				}
 			}
+			if (bestId != std::numeric_limits<uint32_t>::max()) {
+				branches.at(bestId).assignedRegions.emplace_back(RegionId{plzId}, Distance{.value=bestDist});
+			}
+			else {
+				std::cout << "Could not find branch for plz " << regionInfo.at(plzId).plz << std::endl;
+				std::cout << "Branch 0 distance to plz: " << branchDistances.at(0).at(plzId).value << std::endl;
+			}
+	// 		pinfo(plzId);
 		}
-		if (bestId != std::numeric_limits<uint32_t>::max()) {
-			branches.at(bestId).assignedRegions.emplace_back(RegionId{plzId}, Distance{.value=bestDist});
-		}
-		else {
-			std::cout << "Could not find branch for plz " << regionInfo.at(plzId).plz << std::endl;
-			std::cout << "Branch 0 distance to plz: " << branchDistances.at(0).at(plzId).value << std::endl;
-		}
-// 		pinfo(plzId);
+		pinfo.end();
 	}
-	pinfo.end();
+		break;
+	case DistanceWeightConfig::BAM::Greedy:
+	{
+		emit_textInfo("Greedy assign branch for each PLZ");
+		std::vector<BranchId> plz2Branch(regionInfo.size());
+		std::vector<float> plzCosts(regionInfo.size(), 1.0); //cost to pick a plz. This increases with each pick by a constant amount
+		std::vector<double> branchCosts(branches.size(), 0);
+		bool dirty = true;
+		float pickCostInc = 0.1;
+		while (dirty) {
+			dirty = false;
+			//Compute branch costs
+			std::fill(branchCosts.begin(), branchCosts.end(), 0.0);
+			for(std::size_t plzId(0); plzId < regionInfo.size(); ++plzId) {
+				BranchId const & brId = plz2Branch[plzId];
+				if (brId.valid()) {
+					branchCosts.at(brId.value) += branchDistances.at(brId.value).at(plzId).value;
+				}
+			}
+			//for each 
+		}
+	}
+	};
 	emit_textInfo("Finished computing closest branch for each PLZ");
 	//Color the branches
 	std::array<Qt::GlobalColor, 8> colors{
@@ -345,13 +413,18 @@ State::createBranch(double lat, double lon) {
 
 void
 State::createBranches(std::istream & data) {
+	std::vector< std::tuple<double, double, QString> > tmp;
 	while (!data.eof() && data.good()) {
 		std::string name;
 		double lat, lon;
 		data >> name >> lat >> lon;
 		if (data.good()) {
-			createBranch(lat, lon, QString::fromStdString(name));
+			tmp.emplace_back(lat, lon, QString::fromStdString(name));
 		}
+	}
+	#pragma omp parallel for schedule(dynamic)
+	for(std::size_t i=0; i < tmp.size(); ++i) {
+		std::apply([this](auto &&... params) { createBranch(params...); }, tmp[i]);
 	}
 }
 

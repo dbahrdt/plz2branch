@@ -16,6 +16,7 @@ find_package(Qt5Gui REQUIRED)
 find_package(Marble REQUIRED)
 find_package(OpenMP REQUIRED)
 
+#TODO: Find package coin-or-cbc for optimizer which can be found using pkg-config
 
 set(SOURCES_CPP
 	src/main.cpp
@@ -23,9 +24,8 @@ set(SOURCES_CPP
 	src/State.cpp
 	src/BranchTableModel.cpp
 	src/MarbleMap.cpp
-)
-
-set(SOURCES_H
+	src/optimizer.cpp
+	src/FileFormat.cpp
 )
 
 set(SOURCES_MOC_H

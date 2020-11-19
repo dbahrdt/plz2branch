@@ -1,14 +1,42 @@
 # Input File Format
+
+PLZ is just a hint and mostly used to load data of the mip solver
 ```
-<NAME-1>
-<LATITUDE-1>
-<LONGITUDE-1>
-<NAME-2>
-<LATITUDE-2>
-<LONGITUDE-2>
+<NAME-1> <LATITUDE-1> <LONGITUDE-1> <PLZ1> <PLZ2> <PLZ3>
+<NAME-2> <LATITUDE-2> <LONGITUDE-2> <PLZ1> <PLZ2> <PLZ3>
 ```
 
-## What we really want?
+## Distanz
+Jeder PLZ wird die jeweils naheste Filiale zugeordnet.
+Nahe bedeutet hier im Regelfall die mittlere Distanz.
+Nahe kann hierbei noch gewichtet werden:
+ - Mit der Mitarbeiteranzahl der Filiale
+ - Der Bevölkerungsgröße der PLZ
+ 
+## Greedy pick
+PLZ verteilen in Runden:
+In jeder Runde wird für jede Filiale gewählt, die die Kosten der Filiale am wenigsten erhöht.
+Diejenige Filiale mit den zukünftigen geringsten Gesamtkosten bekommt den Zuschlag.
+
+Vorgehen bei bereits zugewiesen PLZ
+1. Überspringen
+2. Wegnehmen
+
+Falls hierdurch eine PLZ einer anderen Filiale weggenommen wird, dann werden diese Kosten der entsprechenden Filiale wieder entfernt.
+Um ein Oszilieren zu vermeiden steigen die Kosten für das Wählen einer PLZ mit jedem Wählen dieser PLZ an.
+
+## Evolutionär
+DNA ist der Vektor V der Länge |P| mit Einträgen aus F.
+Mutation:
+ - Beliebigen Eintrag durch ein random Element aus F ersetzen
+Rekombination:
+ - V_1, V_2 linear durchlaufen und jeweils den Eintrag nehmen, der die geringeren Kosten hat
+Selektion:
+Population nach Kosten sortieren und aus jedem Quantil exponentiell absteigend viele wählen.
+D.h. von den "guten" gibt es viel mehr als von den "schlechten".
+Mit der Zeit sollten die Kosten der "schlechten" kleiner werden.
+
+## Optimal
 
 ```C++
 

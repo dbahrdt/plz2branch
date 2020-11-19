@@ -13,11 +13,13 @@ namespace plz2branch {
 struct Config {
 	Config() {}
 	std::string osmFile;
+	std::string plzFile;
 };
 
 struct RegionInfo {
 	sserialize::spatial::GeoRect bbox;
 	uint32_t plz{std::numeric_limits<uint32_t>::max()};
+	uint32_t inhabitants{1};
 	inline bool valid() const { return plz != std::numeric_limits<uint32_t>::max(); }
 };
 
@@ -48,24 +50,45 @@ struct DistanceWeightConfig {
 		All,
 		OnlyCrossRoads
 	};
-	enum WeightModel {
+	enum NodeWeightModel {
 		Min,
 		Max,
 		Median,
 		Mean
 	};
+	enum class RWM {
+		Equal,
+		Inhabitants //weight by number of inhabitants in the given plz
+	};
+	enum class BWM {
+		Equal,
+		Employees //weight by number of employees
+	};
+	enum class BAM { //Branch assignment
+		ByDistance,
+		Greedy,
+	};
 	DistanceWeightConfig() {}
-	DistanceWeightConfig(NodeSelection ns, WeightModel wm) : nodeSelection(ns), weightModel(wm) {}
+	DistanceWeightConfig(NodeSelection ns, NodeWeightModel nwm, RWM rwm, BWM bwm, BAM bam) :
+	nodeSelection(ns),
+	nodeWeightModel(nwm),
+	regionWeightModel(rwm),
+	branchWeightModel(bwm),
+	branchAssignmentModel(bam)
+	{}
 	DistanceWeightConfig(DistanceWeightConfig const&) = default;
 	DistanceWeightConfig & operator=(DistanceWeightConfig const&) = default;
 	NodeSelection nodeSelection{All};
-	WeightModel weightModel{Min};
+	NodeWeightModel nodeWeightModel{Min};
+	RWM regionWeightModel{RWM::Inhabitants};
+	BWM branchWeightModel{BWM::Employees};
+	BAM branchAssignmentModel{BAM::ByDistance};
 };
 
 std::string to_string(DistanceWeightConfig::NodeSelection v);
-std::string to_string(DistanceWeightConfig::WeightModel v);
+std::string to_string(DistanceWeightConfig::NodeWeightModel v);
 
-void from_string(std::string const & src, DistanceWeightConfig::WeightModel & dest);
+void from_string(std::string const & src, DistanceWeightConfig::NodeWeightModel & dest);
 void from_string(std::string const & src, DistanceWeightConfig::NodeSelection & dest);
 
 struct Distance {
@@ -74,11 +97,13 @@ struct Distance {
 
 struct Branch {
 	QString name;
-	QColor color{Qt::green};
 	sserialize::spatial::GeoPoint coord;
-	memgraph::Graph::NodeId nodeId;
+	uint32_t employees; //number of employees
 	std::vector<std::pair<RegionId, Distance>> assignedRegions;
-	std::vector<Distance> dist; //regionId->distance
+	
+	//Stuff calculated
+	memgraph::Graph::NodeId nodeId;
+	QColor color{Qt::green};
 };
 
 class State: public QObject {
