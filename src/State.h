@@ -45,12 +45,12 @@ struct BranchId {
 	inline bool valid() const { return value != std::numeric_limits<uint32_t>::max(); }
 };
 
-struct DistanceWeightConfig {
-	enum NodeSelection {
+	struct DistanceWeightConfig {
+	enum class NS {
 		All,
 		OnlyCrossRoads
 	};
-	enum NodeWeightModel {
+	enum class NWM {
 		Min,
 		Max,
 		Median,
@@ -67,9 +67,11 @@ struct DistanceWeightConfig {
 	enum class BAM { //Branch assignment
 		ByDistance,
 		Greedy,
+		Evolutionary,
+		ILP
 	};
 	DistanceWeightConfig() {}
-	DistanceWeightConfig(NodeSelection ns, NodeWeightModel nwm, RWM rwm, BWM bwm, BAM bam) :
+	DistanceWeightConfig(NS ns, NWM nwm, RWM rwm = RWM::Equal, BWM bwm = BWM::Equal, BAM bam = BAM::ByDistance) :
 	nodeSelection(ns),
 	nodeWeightModel(nwm),
 	regionWeightModel(rwm),
@@ -78,18 +80,12 @@ struct DistanceWeightConfig {
 	{}
 	DistanceWeightConfig(DistanceWeightConfig const&) = default;
 	DistanceWeightConfig & operator=(DistanceWeightConfig const&) = default;
-	NodeSelection nodeSelection{All};
-	NodeWeightModel nodeWeightModel{Min};
+	NS nodeSelection{NS::All};
+	NWM nodeWeightModel{NWM::Min};
 	RWM regionWeightModel{RWM::Inhabitants};
 	BWM branchWeightModel{BWM::Employees};
 	BAM branchAssignmentModel{BAM::ByDistance};
 };
-
-std::string to_string(DistanceWeightConfig::NodeSelection v);
-std::string to_string(DistanceWeightConfig::NodeWeightModel v);
-
-void from_string(std::string const & src, DistanceWeightConfig::NodeWeightModel & dest);
-void from_string(std::string const & src, DistanceWeightConfig::NodeSelection & dest);
 
 struct Distance {
 	double value{std::numeric_limits<double>::max()};
@@ -135,7 +131,7 @@ public:
 public:
 	void writeBranchAssignments(std::ostream & out);
 public slots:
-	void createBranch(double lat, double lon, QString name);
+	void createBranch(double lat, double lon, QString name, uint32_t employees);
 	void createBranch(double lat, double lon);
 	void createBranches(std::istream & data);
 signals:
@@ -151,3 +147,8 @@ void registerTypesWithQt();
 
 Q_DECLARE_METATYPE(plz2branch::BranchId)
 Q_DECLARE_METATYPE(plz2branch::DistanceWeightConfig);
+Q_DECLARE_METATYPE(plz2branch::DistanceWeightConfig::NS);
+Q_DECLARE_METATYPE(plz2branch::DistanceWeightConfig::NWM);
+Q_DECLARE_METATYPE(plz2branch::DistanceWeightConfig::RWM);
+Q_DECLARE_METATYPE(plz2branch::DistanceWeightConfig::BWM);
+Q_DECLARE_METATYPE(plz2branch::DistanceWeightConfig::BAM);

@@ -54,19 +54,45 @@ m_bc(new detail::BackgroundComputer(this, state))
 	QHBoxLayout * cfgLayout = new QHBoxLayout(this);
 	
 	using DWC = DistanceWeightConfig;
-	m_weightModel = new QComboBox(this);
-	m_weightModel->addItem("All Nodes, Min Distance", QVariant::fromValue(DWC(DWC::All, DWC::Min)));
-	m_weightModel->addItem("All Nodes, Max Distance", QVariant::fromValue(DWC(DWC::All, DWC::Max)));
-	m_weightModel->addItem("All Nodes, Mean Distance", QVariant::fromValue(DWC(DWC::All, DWC::Mean)));
-	m_weightModel->addItem("All Nodes, Median Distance", QVariant::fromValue(DWC(DWC::All, DWC::Median)));
-	m_weightModel->addItem("Only Crossroads, Min Distance", QVariant::fromValue(DWC(DWC::OnlyCrossRoads, DWC::Min)));
-	m_weightModel->addItem("Only Crossroads, Max Distance", QVariant::fromValue(DWC(DWC::OnlyCrossRoads, DWC::Max)));
-	m_weightModel->addItem("Only Crossroads, Mean Distance", QVariant::fromValue(DWC(DWC::OnlyCrossRoads, DWC::Mean)));
-	m_weightModel->addItem("Only Crossroads, Median Distance", QVariant::fromValue(DWC(DWC::OnlyCrossRoads, DWC::Median)));
+	
 	
 	m_computeBtn = new QPushButton("Energize!", this);
 	
-	cfgLayout->addWidget(m_weightModel);
+	m_nodeSelection = new QComboBox();
+	m_nodeWeight = new QComboBox();
+	m_regionWeight = new QComboBox();
+	m_branchWeight = new QComboBox();
+	m_algoSelection = new QComboBox();
+	
+	m_nodeSelection->setPlaceholderText("Straßenknotenauswahl");
+	m_nodeSelection->addItem("Alle", QVariant::fromValue(DWC::NS::All));
+	m_nodeSelection->addItem("Nur Kreuzungen", QVariant::fromValue(DWC::NS::OnlyCrossRoads));
+	
+	m_nodeWeight->setPlaceholderText("PLZ-Distanz-Gewichtung");
+	m_nodeWeight->addItem("Min", QVariant::fromValue(DWC::NWM::Min));
+	m_nodeWeight->addItem("Max", QVariant::fromValue(DWC::NWM::Max));
+	m_nodeWeight->addItem("Mean", QVariant::fromValue(DWC::NWM::Mean));
+	m_nodeWeight->addItem("Median", QVariant::fromValue(DWC::NWM::Median));
+	
+	m_regionWeight->setPlaceholderText("PLZ-Gewichtung");
+	m_regionWeight->addItem("Ohne", QVariant::fromValue(DWC::RWM::Equal));
+	m_regionWeight->addItem("Bevölkerungsdichte", QVariant::fromValue(DWC::RWM::Inhabitants));
+	
+	m_branchWeight->setPlaceholderText("Filial-Gewichtung");
+	m_branchWeight->addItem("Ohne", QVariant::fromValue(DWC::BWM::Equal));
+	m_branchWeight->addItem("Mitarbeiteranzahl", QVariant::fromValue(DWC::BWM::Employees));
+	
+	m_branchWeight->setPlaceholderText("Zuordnungsalgorithmus");
+	m_branchWeight->addItem("Nach Distanz", QVariant::fromValue(DWC::BAM::ByDistance));
+	m_branchWeight->addItem("Greedy Gesamtkostenreduzierung", QVariant::fromValue(DWC::BAM::Greedy));
+	m_branchWeight->addItem("Evolutionär Gesamtkostenreduzierung", QVariant::fromValue(DWC::BAM::Evolutionary));
+	m_branchWeight->addItem("ILP Gesamtkostenreduzierung", QVariant::fromValue(DWC::BAM::ILP));
+
+	cfgLayout->addWidget(m_nodeSelection);
+	cfgLayout->addWidget(m_nodeWeight);
+	cfgLayout->addWidget(m_regionWeight);
+	cfgLayout->addWidget(m_branchWeight);
+	cfgLayout->addWidget(m_algoSelection);
 	cfgLayout->addWidget(m_computeBtn);
 	
 	QWidget * cfgWidget = new QWidget(this);
@@ -130,7 +156,15 @@ m_bc(new detail::BackgroundComputer(this, state))
 MainWindow::~MainWindow() {}
 
 void MainWindow::computeAssignments() {
-	m_bc->compute(m_weightModel->currentData().value<DistanceWeightConfig>());
+	DistanceWeightConfig dwc;
+#define E(__D, __S) dwc.__D = __S->currentData().value<decltype(dwc.__D)>();
+	E(nodeSelection, m_nodeSelection)
+	E(nodeWeightModel, m_nodeWeight)
+	E(regionWeightModel, m_regionWeight)
+	E(branchWeightModel, m_branchWeight)
+	E(branchAssignmentModel, m_algoSelection)
+#undef E
+	m_bc->compute(dwc);
 }
 
 void MainWindow::computationFinished() {

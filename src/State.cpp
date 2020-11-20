@@ -10,6 +10,11 @@ namespace plz2branch {
 void registerTypesWithQt() {
 	qRegisterMetaType<plz2branch::BranchId>();
 	qRegisterMetaType<plz2branch::DistanceWeightConfig>();
+	qRegisterMetaType<plz2branch::DistanceWeightConfig::NS>();
+	qRegisterMetaType<plz2branch::DistanceWeightConfig::NWM>();
+	qRegisterMetaType<plz2branch::DistanceWeightConfig::RWM>();
+	qRegisterMetaType<plz2branch::DistanceWeightConfig::BWM>();
+	qRegisterMetaType<plz2branch::DistanceWeightConfig::BAM>();
 }
 
 void
@@ -144,16 +149,16 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 	
 	auto nodeSelector = [&](NodeId const & nid) {
 		switch (dwc.nodeSelection) {
-		case DistanceWeightConfig::All:
+		case DistanceWeightConfig::NS::All:
 			return true;
-		case DistanceWeightConfig::OnlyCrossRoads:
+		case DistanceWeightConfig::NS::OnlyCrossRoads:
 			return graph.node(nid).edgeCount() > 1;
 		};
 		return true;
 	};
 	
 	switch (dwc.nodeWeightModel) {
-	case DistanceWeightConfig::Min:
+	case DistanceWeightConfig::NWM::Min:
 	{
 		std::vector<sserialize::AtomicMin<double>> distances(regionInfo.size());
 		#pragma omp parallel for schedule(dynamic)
@@ -175,7 +180,7 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 		}
 	}
 	break;
-	case DistanceWeightConfig::Max:
+	case DistanceWeightConfig::NWM::Max:
 	{
 		std::vector<sserialize::AtomicMax<double>> distances(regionInfo.size());
 		#pragma omp parallel for schedule(dynamic)
@@ -194,7 +199,7 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 		}
 	}
 	break;
-	case DistanceWeightConfig::Mean:
+	case DistanceWeightConfig::NWM::Mean:
 	{
 		std::vector< std::atomic<double> > distances(regionInfo.size());
 		std::vector< std::atomic<uint32_t> > numNodes(regionInfo.size());
@@ -219,7 +224,7 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 		}
 	}
 	break;
-	case DistanceWeightConfig::Median:
+	case DistanceWeightConfig::NWM::Median:
 	{
 		std::vector<sserialize::GuardedVariable<std::vector<double>>> distances(regionInfo.size());
 		
@@ -352,6 +357,16 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 			//for each 
 		}
 	}
+	case DistanceWeightConfig::BAM::Evolutionary:
+	{
+		emit_textInfo("Evolutionary algo not implemented");
+		break;
+	}
+	case DistanceWeightConfig::BAM::ILP:
+	{
+		emit_textInfo("ILP algo not implemented");
+		break;
+	}
 	};
 	emit_textInfo("Finished computing closest branch for each PLZ");
 	//Color the branches
@@ -377,20 +392,22 @@ State::writeBranchAssignments(std::ostream & out) {
 	out << std::setprecision(std::numeric_limits<double>::digits10 + 1);
 	for(std::size_t i(0), s(branches.size()); i < s; ++i) {
 		Branch const & branch = branches[i];
-		out << "{\n\tid:" << i << ",\n";
-		out << "\nname:" << branch.name.toStdString() << ",\n";
-		out << "\tcoord: (" << branch.coord.lat() << ", " << branch.coord.lon() << "),\n";
-		out << "\tplz: [";
-		for(auto const & [rId, rDist] : branch.assignedRegions) {
-			RegionInfo const & ri = regionInfo.at(rId.value());
-			out << ri.plz << ", ";
+		out << branch.name.toStdString() << '\t';
+		out << branch.coord.lat() << '\t' << branch.coord.lon() << '\t';
+		out << branch.employees << '\t';
+		for(std::size_t j(0), js(branch.assignedRegions.size()); j < js;) {
+			out << regionInfo.at(branch.assignedRegions.at(j).first.value()).plz;
+			++j;
+			if (j < js) {
+				out << '\t';
+			}
 		}
-		out << "]\n}";
+		out << '\n';
 	}
 }
 
 void
-State::createBranch(double lat, double lon, QString name) {
+State::createBranch(double lat, double lon, QString name, uint32_t employees) {
 	Branch branch;
 	{
 		std::shared_lock<std::shared_mutex> lck;
@@ -408,19 +425,25 @@ State::createBranch(double lat, double lon, QString name) {
 
 void
 State::createBranch(double lat, double lon) {
-	createBranch(lat, lon, "");
+	createBranch(lat, lon, "", 1);
 }
 
 void
 State::createBranches(std::istream & data) {
-	std::vector< std::tuple<double, double, QString> > tmp;
+	std::vector< std::tuple<double, double, QString, uint32_t> > tmp;
+	std::stringstream ls;
 	while (!data.eof() && data.good()) {
+		std::string line;
+		std::getline(data, line);
+		if (!line.size()) {
+			continue;
+		}
+		ls << line;
 		std::string name;
 		double lat, lon;
-		data >> name >> lat >> lon;
-		if (data.good()) {
-			tmp.emplace_back(lat, lon, QString::fromStdString(name));
-		}
+		uint32_t employees;
+		ls >> name >> lat >> lon >> employees;
+		//Ignore plz
 	}
 	#pragma omp parallel for schedule(dynamic)
 	for(std::size_t i=0; i < tmp.size(); ++i) {

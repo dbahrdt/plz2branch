@@ -1,6 +1,8 @@
+## Eine neue Fapra-Aufgabe aus der realen Welt
+
 # Input File Format
 
-PLZ is just a hint and mostly used to load data of the mip solver
+PLZ is just a hint
 ```
 <NAME-1> <LATITUDE-1> <LONGITUDE-1> <PLZ1> <PLZ2> <PLZ3>
 <NAME-2> <LATITUDE-2> <LONGITUDE-2> <PLZ1> <PLZ2> <PLZ3>

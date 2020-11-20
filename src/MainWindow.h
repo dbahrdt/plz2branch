@@ -56,8 +56,11 @@ private://gui stuff
 	
 	QPushButton * m_computeBtn;
 	
-	QComboBox * m_weightModel;
 	QComboBox * m_nodeSelection;
+	QComboBox * m_nodeWeight;
+	QComboBox * m_regionWeight;
+	QComboBox * m_branchWeight;
+	QComboBox * m_algoSelection;
 	
 	QLabel * m_infoLabel;
 };
