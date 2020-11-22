@@ -4,12 +4,15 @@
 #include <sserialize/algorithm/utilmath.h>
 #include <queue>
 #include <map>
+#include <random>
 #include "FileFormat.h"
 
 #include <boost/property_map/property_map.hpp>
 #include <boost/graph/directed_graph.hpp>
 #include <boost/graph/successive_shortest_path_nonnegative_weights.hpp>
 #include <boost/graph/find_flow_cost.hpp>
+
+#include <pcg_random.hpp>
 
 
 namespace plz2branch {
@@ -345,7 +348,141 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 		break;
 	case DistanceWeightConfig::BAM::Evolutionary:
 	{
-		emit_textInfo("Evolutionary algo not implemented");
+		using Resident = std::vector<uint16_t>;
+		using Population = std::vector<Resident>;
+		pcg_extras::seed_seq_from<std::random_device> seed_source;
+		pcg32 rg(seed_source);
+		auto u01d = std::uniform_real_distribution<double>(0,1);
+		auto bd = std::uniform_int_distribution<uint16_t>(0, branches.size()-1);
+		auto sd = std::geometric_distribution<uint32_t>(0.5); //take half of all upper
+		Population pop;
+		sserialize::MinMax<double> mm_residentCosts;
+		std::vector<double> residentCosts;
+		auto mutate = [&](Resident & r, double mutationRate) -> Resident {
+			Resident result;
+			for(auto & x : r) {
+				if (u01d(rg) < mutationRate) {
+					result.push_back( bd(rg) );
+				}
+				else {
+					result.push_back(x);
+				}
+			}
+			return result;
+		};
+		auto sex = [&](Resident & r1, Resident & r2) -> Resident {
+			Resident child;
+			for(std::size_t i(0), s(r1.size()); i < s; ++i) {
+				Distance const & cost1 = branchDistances.at(r1.at(i)).at(i);
+				Distance const & cost2 = branchDistances.at(r2.at(i)).at(i);
+				if (cost1 < cost2) {
+					child.push_back(r1.at(i));
+				}
+				else {
+					child.push_back(r2.at(i));
+				}
+			}
+			return child;
+		};
+		auto rcost = [&](Resident const & r) {
+			double cost = 0;
+			for(std::size_t rId(0); rId < regionInfo.size(); ++rId) {
+				cost += branchDistances.at(r.at(rId)).at(rId).value;
+			}
+			return cost;
+		};
+		auto pcost = [&](Population const & p) -> double {
+			double cost = 0;
+			for(auto const & r : p) {
+				cost += rcost(r);
+			}
+			return cost;
+		};
+		auto pbest = [&](Population const & p) -> std::pair<uint32_t, double> {
+			uint32_t best_pos = std::numeric_limits<uint32_t>::max();
+			double best_cost = std::numeric_limits<double>::max();
+			for(std::size_t i(0), s(p.size()); i < s; ++i) {
+				double cost = rcost(p.at(i));
+				if (cost < best_cost) {
+					best_cost = cost;
+					best_pos = i;
+				}
+			}
+			return std::make_pair(best_pos, best_cost);
+		};
+		auto updateResidentCosts = [&]() {
+			mm_residentCosts.reset();
+			residentCosts.resize(0);
+			residentCosts.reserve(pop.size());
+			for(auto const & r : pop) {
+				residentCosts.push_back( rcost(r) );
+				mm_residentCosts.update(residentCosts.back());
+			}
+		};
+		//Select residents based on their cost relative to the best
+		//The best is selected with propability 1, the worst with probability 0
+		//The others are selected with probability (cost - worst)/(best - worst)
+		auto select = [&](Population const & p) -> Population {
+			Population result;
+			for(std::size_t i(0), s(residentCosts.size()); i < s; ++i) {
+				double prob = 1-(residentCosts.at(i)-mm_residentCosts.min())/(mm_residentCosts.max() - mm_residentCosts.min());
+				if (u01d(rg) <= prob) {
+					result.push_back( p.at(i) );
+				}
+			}
+			return result;
+		};
+		//Fill our population
+
+		std::size_t popSize = 1024;
+		for(std::size_t i(0); i < popSize; ++i) {
+			Resident r;
+			for(std::size_t rId(0); rId < regionInfo.size(); ++rId) {
+				r.push_back( bd(rg) );
+			}
+			pop.push_back(std::move(r));
+		}
+		//Now play evolution
+		//We mutate a resident with probability 1-(cost - worst)/(best - worst)
+		//Hence worst is mutated with probability 1 whereas the best is no mutated
+		//
+		//Additionally the residents may have sex with each other with probability?
+		//The better ones should have a higher probability to have sex with each other than with a worse one?
+		std::size_t numGenerations = 1000;
+		double mutationRate = 0.01;
+		updateResidentCosts();
+		for(std::size_t generation(0); generation < numGenerations; ++generation) {
+			emit_textInfo(QString("Generation %1: min=%2 max=%3").arg(generation).arg(mm_residentCosts.min()).arg(mm_residentCosts.max()));
+			//Mutate
+			for(std::size_t resId(0), s(pop.size()); resId < s; ++resId) {
+				double prob = (residentCosts.at(resId)-mm_residentCosts.min())/(mm_residentCosts.max()-mm_residentCosts.min());
+				if (u01d(rg) < prob) {
+					pop.push_back( mutate(pop.at(resId), mutationRate) );
+				}
+			}
+			emit_textInfo(QString("Generation %1: mutation: pop.size()=%2").arg(generation).arg(pop.size()));
+			//Each should have sex with a random partner (and probability corresponding to their cost distance?)
+			std::uniform_int_distribution<std::size_t> resRand(0, pop.size());
+			for(std::size_t resId(0), s(pop.size()); resId < s; ++resId) {
+				std::size_t partnerId = resRand(rg);
+				pop.push_back( sex(pop.at(resId), pop.at(partnerId)) );
+			}
+			emit_textInfo(QString("Generation %1: sex: pop.size()=%2").arg(generation).arg(pop.size()));
+			//Select the population down to the original population size
+			updateResidentCosts();
+			while(pop.size() > popSize && mm_residentCosts.min() != mm_residentCosts.max()) {
+				emit_textInfo(QString("Generation %1: select: pop.size=%2 cost(min/max)=%3/%4)=").arg(generation).arg(pop.size()).arg(mm_residentCosts.min()).arg(mm_residentCosts.max()));
+				pop = select(pop);
+				updateResidentCosts();
+			}
+			emit_textInfo(QString("Generation %1: select: pop.size()=%2").arg(generation).arg(pop.size()));
+		}
+		//now get the best one and use it as a result
+		auto best = pbest(pop);
+		for(std::size_t rId(0); rId < regionInfo.size(); ++rId) {
+			auto brId = pop.at(best.first).at(rId);
+			branches.at(brId).assignedRegions.emplace_back(RegionId(rId), branchDistances.at(brId).at(rId));
+		}
 		break;
 	}
 	case DistanceWeightConfig::BAM::Optimal:

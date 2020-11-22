@@ -88,6 +88,7 @@ struct BranchId {
 
 struct Distance {
 	double value{std::numeric_limits<double>::max()};
+	inline bool operator<(Distance const & o) const { return value < o.value; }
 };
 
 struct Branch {

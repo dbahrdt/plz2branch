@@ -7,3 +7,6 @@
 [submodule "vendor/sserialize"]
 	path = vendor/sserialize
 	url = https://github.com/dbahrdt/sserialize.git
+[submodule "vendor/pcg"]
+	path = vendor/pcg
+	url = https://github.com/imneme/pcg-cpp

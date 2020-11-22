@@ -49,6 +49,7 @@ set(MY_LINK_LIBS
 set(MY_INCLUDE_DIRS
 	${QT_INCLUDES}
 	${MARBLE_INCLUDE_DIR}
+	${CMAKE_SOURCE_DIR}/vendor/pcg/include
 )
 
 qt5_wrap_cpp(SOURCES_MOC_CPP ${SOURCES_MOC_H})
