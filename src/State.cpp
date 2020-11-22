@@ -3,7 +3,14 @@
 #include <osmtools/AreaExtractorFilters.h>
 #include <sserialize/algorithm/utilmath.h>
 #include <queue>
+#include <map>
 #include "FileFormat.h"
+
+#include <boost/property_map/property_map.hpp>
+#include <boost/graph/directed_graph.hpp>
+#include <boost/graph/successive_shortest_path_nonnegative_weights.hpp>
+#include <boost/graph/find_flow_cost.hpp>
+
 
 namespace plz2branch {
 
@@ -336,52 +343,140 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 		pinfo.end();
 	}
 		break;
-	case DistanceWeightConfig::BAM::Greedy:
-	{
-		emit_textInfo("Greedy assign branch for each PLZ");
-		std::vector<BranchId> plz2Branch(regionInfo.size());
-		std::vector<float> plzCosts(regionInfo.size(), 1.0); //cost to pick a plz. This increases with each pick by a constant amount
-		std::vector<double> branchCosts(branches.size(), 0);
-		bool dirty = true;
-		float pickCostInc = 0.1;
-		while (dirty) {
-			dirty = false;
-			//Compute branch costs
-			std::fill(branchCosts.begin(), branchCosts.end(), 0.0);
-			for(std::size_t plzId(0); plzId < regionInfo.size(); ++plzId) {
-				BranchId const & brId = plz2Branch[plzId];
-				if (brId.valid()) {
-					branchCosts.at(brId.value) += branchDistances.at(brId.value).at(plzId).value;
-				}
-			}
-			//for each 
-		}
-	}
 	case DistanceWeightConfig::BAM::Evolutionary:
 	{
 		emit_textInfo("Evolutionary algo not implemented");
 		break;
 	}
-	case DistanceWeightConfig::BAM::ILP:
+	case DistanceWeightConfig::BAM::Optimal:
 	{
-		emit_textInfo("ILP algo not implemented");
-		break;
+		//We map all weights to uint64_t with totalWeights mapping to std::numeric_limits<uint64_t>/2
+		double maxWeight = 0;
+		for(auto const & x : branchDistances) {
+			for(auto const & y : x) {
+				maxWeight = std::max(maxWeight, y.value);
+			}
+		}
+		emit_textInfo(QString("Max weight: %1").arg(maxWeight));
+		auto intWeight = [maxWeight](double v) -> int64_t {
+			int64_t result = (v/maxWeight) * double(std::numeric_limits<uint32_t>::max());
+			if (v >= 1 && result == 0) {
+				throw std::runtime_error("Precision of uint32_t not high enough");
+			}
+			return result;
+		};
+		using Graph = boost::adjacency_list<>;
+		using vertex_descriptor = boost::graph_traits<Graph>::vertex_descriptor;
+		using edge_descriptor = boost::graph_traits<Graph>::edge_descriptor;
+		emit_textInfo("Constructing graph...");
+		Graph g;
+		vertex_descriptor source = boost::add_vertex(g);
+		vertex_descriptor target = boost::add_vertex(g);
+		std::vector<vertex_descriptor> branch_nodes;
+		std::vector<edge_descriptor> s_branch_edges;
+		std::map<edge_descriptor, int64_t> weights;
+		std::map<edge_descriptor, int64_t> capacities;
+		std::map<edge_descriptor, edge_descriptor> reverse_edges;
+		for(auto const & branch : branches) {
+			vertex_descriptor v = boost::add_vertex(g);
+			branch_nodes.push_back(v);
+			auto e = boost::add_edge(source, v, g).first;
+			//real edge
+			s_branch_edges.push_back(e);
+			weights[e] = 0;
+			capacities[e] = branch.maxRegions;
+			//reverse edge
+			auto re = boost::add_edge(v, source, g).first;
+			weights[re] = -weights[e];
+			capacities[re] = 0;
+			reverse_edges[e] = re;
+			reverse_edges[re] = e;
+		}
+		std::vector<vertex_descriptor> regionNodes;
+		std::vector<edge_descriptor> branch_region_edges;
+		std::vector<edge_descriptor> region_t_edges;
+		for(std::size_t rId(0); rId < regionInfo.size(); ++rId) {
+			vertex_descriptor region_v = boost::add_vertex(g);
+			regionNodes.push_back( region_v );
+			for(std::size_t brId(0); brId < branches.size(); ++brId) {
+				auto const & branch_v = branch_nodes.at(brId);
+				auto e = boost::add_edge(branch_v, region_v, g).first;
+				branch_region_edges.push_back(e);
+				weights[e] = intWeight( branchDistances.at(brId).at(rId).value );
+				capacities[e] = 1;
+				//reverse edge
+				auto re = boost::add_edge(region_v, branch_v, g).first;
+				weights[re] = -weights[e];
+				capacities[re] = 0;
+				reverse_edges[e] = re;
+				reverse_edges[re] = e;
+			}
+			auto e = boost::add_edge(region_v, target, g).first;
+			region_t_edges.push_back(e);
+			weights[e] = 0;
+			capacities[e] = 1;
+			//reverse edge
+			auto re = boost::add_edge(target, region_v, g).first;
+			weights[re] = -weights[e];
+			capacities[re] = 0;
+			reverse_edges[e] = re;
+			reverse_edges[re] = e;
+		}
+		emit_textInfo( QString("Graph has %1 vertices and %2 edges").arg(boost::num_vertices(g)).arg(boost::num_edges(g)) );
+		emit_textInfo("Executing boost::successive_shortest_path_nonnegative_weights");
+		std::map<edge_descriptor, int64_t> residual_capacities;
+		boost::successive_shortest_path_nonnegative_weights(
+			g,
+			source,
+			target,
+			boost::weight_map(boost::associative_property_map(weights))
+			.capacity_map(boost::associative_property_map(capacities))
+			.residual_capacity_map(boost::associative_property_map(residual_capacities))
+			.reverse_edge_map(boost::associative_property_map(reverse_edges))
+		);
+		emit_textInfo(QString("residual_capacities.size()=%1").arg(residual_capacities.size()));
+		emit_textInfo("Assembling mapping");
+		
+		//Assemble the mapping:
+		//The edges between the branches an the regions are the ones that we picked
+		//An edge (branch, region) with flow=1 (residual capacity=0) means
+		//that the branch handles the region
+		uint32_t plzWithBranch = 0;
+		auto edgeIt = branch_region_edges.begin();
+		for(uint32_t rId(0); rId < regionInfo.size(); ++rId) {
+			for(uint32_t brId(0); brId < branches.size(); ++brId, ++edgeIt) {
+				assert(residual_capacities.at(*edgeIt) == 0 || residual_capacities.at(*edgeIt) == 1);
+				if (residual_capacities.count(*edgeIt) && residual_capacities.at(*edgeIt) == 0) {
+					branches.at(brId).assignedRegions.emplace_back(RegionId{rId}, branchDistances.at(brId).at(rId));
+					++plzWithBranch;
+				}
+			}
+		}
+		assert(plzWithBranch == regionInfo.size());
+		if (plzWithBranch != regionInfo.size()) {
+			std::cerr << "Failed to compute assignment for " << regionInfo.size() - plzWithBranch << " regions" << std::endl;
+			for(uint32_t brId(0); brId < branches.size(); ++brId) {
+				auto const & br = branches.at(brId);
+				auto flow = br.maxRegions - residual_capacities.at(s_branch_edges.at(brId));
+				if (br.assignedRegions.size() !=  flow) {
+					std::cerr << "Branch " << brId << " has " << br.assignedRegions.size() << " regions and flow of " << flow << std::endl;
+				}
+			}
+		}
+		emit_textInfo("Assembled mapping");
 	}
+		break;
 	};
 	emit_textInfo("Finished computing closest branch for each PLZ");
-	//Color the branches
-	std::array<Qt::GlobalColor, 8> colors{
-		Qt::red,
-		Qt::blue,
-		Qt::darkRed,
-		Qt::darkGreen,
-		Qt::darkBlue,
-		Qt::darkCyan,
-		Qt::darkMagenta,
-		Qt::darkYellow
-	};
-	for(std::size_t i(0), s(branches.size()); i < s; ++i) {
-		branches.at(i).color = QColor(colors.at(i%colors.size()));
+
+	emit_textInfo("Computing costs");
+	totalCost = 0;
+	for(auto & br : branches) {
+		br.cost = 0;
+		for(auto const & [_, dist] : br.assignedRegions) {
+			br.cost += dist.value;
+		}
+		totalCost += br.cost;
 	}
 	emit_textInfo("Finished computing branch assignments");
 }
@@ -408,6 +503,16 @@ State::writeBranchAssignments(std::ostream & out) {
 
 void
 State::createBranch(double lat, double lon, QString name, uint32_t employees) {
+	std::array<Qt::GlobalColor, 8> colors{
+		Qt::red,
+		Qt::blue,
+		Qt::darkRed,
+		Qt::darkGreen,
+		Qt::darkBlue,
+		Qt::darkCyan,
+		Qt::darkMagenta,
+		Qt::darkYellow
+	};
 	Branch branch;
 	{
 		std::shared_lock<std::shared_mutex> lck;
@@ -418,6 +523,7 @@ State::createBranch(double lat, double lon, QString name, uint32_t employees) {
 	branch.coord.lon() = graph.nodeInfo(branch.nodeId).lon;
 	{
 		std::unique_lock<std::shared_mutex> lck;
+		branch.color = QColor(colors.at(branches.size()%colors.size()));
 		branches.push_back(branch);
 	}
 	emit dataChanged();

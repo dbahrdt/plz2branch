@@ -31,10 +31,16 @@ QVariant BranchTableModel::headerData(int section, Qt::Orientation orientation, 
 				return QVariant("Longitude");
 			case (CN_NAME):
 				return QVariant("Name");
+			case (CN_EMPLOYEES):
+				return QVariant("Employees");
+			case (CN_MAX_PLZ):
+				return QVariant("Max PLZ");
 			case CN_PLZ:
 				return QVariant("PLZ");
 			case CN_NUM_PLZ:
 				return QVariant("#PLZ");
+			case CN_COST:
+				return QVariant("Cost");
 			case (CN_SHOW):
 				return QVariant("Show");
 			default:
@@ -67,6 +73,10 @@ QVariant BranchTableModel::data(const QModelIndex& index, int role) const {
 			return QVariant(info.coord.lon());
 		case CN_NAME:
 			return QVariant(info.name);
+		case CN_EMPLOYEES:
+			return QVariant(info.employees);
+		case CN_MAX_PLZ:
+			return QVariant(info.maxRegions);
 		case CN_PLZ:
 		{
 			std::stringstream ss;
@@ -78,6 +88,10 @@ QVariant BranchTableModel::data(const QModelIndex& index, int role) const {
 		case CN_NUM_PLZ:
 		{
 			return QVariant((uint32_t) info.assignedRegions.size());
+		}
+		case CN_COST:
+		{
+			return QVariant((uint32_t) info.cost);
 		}
 		case CN_SHOW:
 		{
@@ -101,13 +115,37 @@ BranchTableModel::setData(const QModelIndex &index, const QVariant &value, int r
 	if (role == Qt::EditRole) {
 		int col = index.column();
 		int row = index.row();
-		if (col == CN_NAME) {
+		switch (col) {
+		case CN_NAME:
+		{
 			std::unique_lock<std::shared_mutex> lck(m_state->dataMtx);
 			if (row < m_state->branches.size()) {
 				m_state->branches.at(row).name = value.toString();
 				return true;
 			}
 		}
+			break;
+		case CN_EMPLOYEES:
+		{
+			std::unique_lock<std::shared_mutex> lck(m_state->dataMtx);
+			if (row < m_state->branches.size()) {
+				m_state->branches.at(row).employees = std::max(0, value.toString().toInt());
+				return true;
+			}
+		}
+			break;
+		case CN_MAX_PLZ:
+		{
+			std::unique_lock<std::shared_mutex> lck(m_state->dataMtx);
+			if (row < m_state->branches.size()) {
+				m_state->branches.at(row).maxRegions = std::max(0, value.toString().toInt());
+				return true;
+			}
+		}
+			break;
+		default:
+			break;
+		};
 	}
 	return QAbstractTableModel::setData(index, value, role);
 }
@@ -115,12 +153,14 @@ BranchTableModel::setData(const QModelIndex &index, const QVariant &value, int r
 Qt::ItemFlags
 BranchTableModel::flags(const QModelIndex &index) const
 {
-	int col = index.column();
-
-	if (col == CN_NAME) {
+	switch (index.column()) {
+	case CN_NAME:
+	case CN_EMPLOYEES:
+	case CN_MAX_PLZ:
 		return QAbstractItemModel::flags(index) | Qt::ItemIsEditable;
-	}
-	return QAbstractTableModel::flags(index);
+	default:
+		return QAbstractTableModel::flags(index);
+	};
 }
 
 void BranchTableModel::resetData() {

@@ -8,7 +8,7 @@ namespace plz2branch {
 class BranchTableModel: public QAbstractTableModel {
 	Q_OBJECT
 private:
-	typedef enum { CN_ID=0, CN_SHOW, CN_LAT, CN_LON, CN_NAME, CN_PLZ, CN_NUM_PLZ, CN_COL_COUNT} ColNames;
+	typedef enum { CN_ID=0, CN_SHOW, CN_LAT, CN_LON, CN_NAME, CN_EMPLOYEES, CN_MAX_PLZ, CN_PLZ, CN_NUM_PLZ, CN_COST, CN_COL_COUNT} ColNames;
 public:
 	BranchTableModel(QObject * parent, std::shared_ptr<State> state);
 	~BranchTableModel() override;

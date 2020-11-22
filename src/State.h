@@ -66,9 +66,8 @@ struct BranchId {
 	};
 	enum class BAM { //Branch assignment
 		ByDistance,
-		Greedy,
 		Evolutionary,
-		ILP
+		Optimal
 	};
 	DistanceWeightConfig() {}
 	DistanceWeightConfig(NS ns, NWM nwm, RWM rwm = RWM::Equal, BWM bwm = BWM::Equal, BAM bam = BAM::ByDistance) :
@@ -94,12 +93,14 @@ struct Distance {
 struct Branch {
 	QString name;
 	sserialize::spatial::GeoPoint coord;
-	uint32_t employees; //number of employees
+	uint32_t employees{1}; //number of employees
+	uint32_t maxRegions{std::numeric_limits<uint32_t>::max()}; //maximum number of regions
 	std::vector<std::pair<RegionId, Distance>> assignedRegions;
 	
 	//Stuff calculated
 	memgraph::Graph::NodeId nodeId;
 	QColor color{Qt::green};
+	double cost{0};
 };
 
 class State: public QObject {
@@ -117,6 +118,8 @@ public:
 	std::vector<RegionInfo> regions;
 	std::vector<Branch> branches;
 	std::unordered_set<uint32_t> enabledBranches;
+	
+	double totalCost{0};
 	
 	mutable std::shared_mutex dataMtx;
 public:

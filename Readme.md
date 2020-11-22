@@ -38,12 +38,22 @@ Population nach Kosten sortieren und aus jedem Quantil exponentiell absteigend v
 D.h. von den "guten" gibt es viel mehr als von den "schlechten".
 Mit der Zeit sollten die Kosten der "schlechten" kleiner werden.
 
-## Optimal
+## Optimal Problem Formulation
 
-```C++
+$F = \left\{ f_0 \ldots f_m \right\}$ Menge an Filialen
+$P = \left\{ p_0 \ldots p_n \right\}$ Menge an Postleitzahlen
+$c: F \times P \to \R, (f, p) \mapsto dist(f, p)*people(p)/workers(f)$ Kosten, falls Filiale $f_i$ die Postleitzahl $p_j$ bedient mit $dist$ einer Funktion, die die Distanz von der Filiale zur PLZ angibt.
+Gesucht ist eine Überdeckung von $P$ mit Teilmengen $Z_i \subseteq P$ mit $\forall i,j : i \neq j \Rightarrow Z_i \cap Z_j = \emptyset$ und $cost = \Sigma_i Z_i = \Sigma_{u,v \in F \times P} c(f, p)$
+### Min-Cost-Max-Flow
+$S_F = \{(u, v) : u = s \wedge v \in F \}$
+E=S
 
-Sei P={p_0, ... p_n} eine Menge von Postleitzahlen.
-F={f_0, ... f_m} eine Menge von Filialen.
+```
+
+### ILP
+
+Sei $P={p_0, ... p_n}$ eine Menge von Postleitzahlen.
+$F=\{f_0, ... f_m\}$ eine Menge von Filialen.
 m: F -> \N eine Funktion, die die Mitarbeiternanzahl einer Filiale widergibt
 b: P -> \R eine Funktion, die die Bevölkerungsdichte einer Postleitzahl angibt
 d: P x F -> \R eine Funtion, die die mittlere Distanz einer Postleitzahl zu einer Filiale engibt.
@@ -69,5 +79,3 @@ Für jede Filiale f_j mindestens l_j viele PLZ
 
 Für jede Filiale f_j maximal u_j viele PLZ
 \sum_i x_ij <= u_j
-
-```

@@ -16,7 +16,7 @@ find_package(Qt5Gui REQUIRED)
 find_package(Marble REQUIRED)
 find_package(OpenMP REQUIRED)
 
-#TODO: Find package coin-or-cbc for optimizer which can be found using pkg-config
+find_package(Boost REQUIRED graph)
 
 set(SOURCES_CPP
 	src/main.cpp
@@ -43,6 +43,7 @@ set(MY_LINK_LIBS
 	Qt5::Widgets
 	Qt5::Gui
 	OpenMP::OpenMP_CXX
+	Boost::graph
 )
 
 set(MY_INCLUDE_DIRS

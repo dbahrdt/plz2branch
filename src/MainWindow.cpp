@@ -28,7 +28,12 @@ BackgroundComputer::~BackgroundComputer() {}
 void BackgroundComputer::compute(DistanceWeightConfig const & dwc) {
 	(void) std::async(std::launch::async, [this](DistanceWeightConfig const & dwc) {
 		std::cout << "Computing branch assignments in thread " << std::this_thread::get_id() << std::endl;
-		m_state->computeBranchAssignments(dwc);
+		try {
+			m_state->computeBranchAssignments(dwc);
+		}
+		catch(std::exception const & e) {
+			std::cerr << "Error occured: " << e.what() << std::endl;
+		}
 		finished();
 	}, dwc);
 }
@@ -51,7 +56,7 @@ m_bc(new detail::BackgroundComputer(this, state))
 
 	m_branchesTableView->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
 	
-	QHBoxLayout * cfgLayout = new QHBoxLayout(this);
+	QGridLayout * cfgLayout = new QGridLayout(this);
 	
 	using DWC = DistanceWeightConfig;
 	
@@ -82,18 +87,17 @@ m_bc(new detail::BackgroundComputer(this, state))
 	m_branchWeight->addItem("Ohne", QVariant::fromValue(DWC::BWM::Equal));
 	m_branchWeight->addItem("Mitarbeiteranzahl", QVariant::fromValue(DWC::BWM::Employees));
 	
-	m_branchWeight->setPlaceholderText("Zuordnungsalgorithmus");
-	m_branchWeight->addItem("Nach Distanz", QVariant::fromValue(DWC::BAM::ByDistance));
-	m_branchWeight->addItem("Greedy Gesamtkostenreduzierung", QVariant::fromValue(DWC::BAM::Greedy));
-	m_branchWeight->addItem("Evolutionär Gesamtkostenreduzierung", QVariant::fromValue(DWC::BAM::Evolutionary));
-	m_branchWeight->addItem("ILP Gesamtkostenreduzierung", QVariant::fromValue(DWC::BAM::ILP));
+	m_algoSelection->setPlaceholderText("Zuordnungsalgorithmus");
+	m_algoSelection->addItem("Nach Distanz", QVariant::fromValue(DWC::BAM::ByDistance));
+	m_algoSelection->addItem("Evolutionär Gesamtkostenreduzierung", QVariant::fromValue(DWC::BAM::Evolutionary));
+	m_algoSelection->addItem("MinCostFlow Gesamtkostenreduzierung", QVariant::fromValue(DWC::BAM::Optimal));
 
-	cfgLayout->addWidget(m_nodeSelection);
-	cfgLayout->addWidget(m_nodeWeight);
-	cfgLayout->addWidget(m_regionWeight);
-	cfgLayout->addWidget(m_branchWeight);
-	cfgLayout->addWidget(m_algoSelection);
-	cfgLayout->addWidget(m_computeBtn);
+	cfgLayout->addWidget(m_nodeSelection, 0, 0);
+	cfgLayout->addWidget(m_nodeWeight, 1, 0);
+	cfgLayout->addWidget(m_regionWeight, 2, 0);
+	cfgLayout->addWidget(m_branchWeight, 0, 1);
+	cfgLayout->addWidget(m_algoSelection, 1, 1);
+	cfgLayout->addWidget(m_computeBtn, 2, 1);
 	
 	QWidget * cfgWidget = new QWidget(this);
 	cfgWidget->setLayout(cfgLayout);
@@ -168,6 +172,7 @@ void MainWindow::computeAssignments() {
 }
 
 void MainWindow::computationFinished() {
+	m_infoLabel->setText(QString("Total cost: %1").arg(m_state->totalCost));
 	emit dataChanged();
 }
 
