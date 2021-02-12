@@ -144,20 +144,33 @@ m_bc(new detail::BackgroundComputer(this, state))
 	connect(m_state.get(), SIGNAL(textInfo(QString const&)), m_infoLabel, SLOT(setText(QString)));
 	
 	auto fileMenu = menuBar()->addMenu("&File");
-	QAction * openAction = new QAction("&Open", this);
+	QAction * openAction = new QAction("&Load", this);
 	fileMenu->addAction(openAction);
 	QAction * saveAction = new QAction("&Save", this);
 	fileMenu->addAction(saveAction);
+	QAction * exportAction = new QAction("&Export", this);
+	fileMenu->addAction(exportAction);
+	QAction * closeAction = new QAction("&Close", this);
+	fileMenu->addAction(closeAction);
 	
-	connect(openAction, SIGNAL(triggered(bool)), this, SLOT(loadFile()));
-	connect(saveAction, SIGNAL(triggered(bool)), this, SLOT(saveAssignments()));
+	auto editMenu = menuBar()->addMenu("&Edit");
+	QAction * clearAction = new QAction("&Clear", this);
+	editMenu->addAction(clearAction);
+	
+	connect(openAction, SIGNAL(triggered(bool)), this, SLOT(load()));
+	connect(saveAction, SIGNAL(triggered(bool)), this, SLOT(save()));
+	connect(exportAction, SIGNAL(triggered(bool)), this, SLOT(exportResults()));
+	connect(closeAction, SIGNAL(triggered(bool)), this, SIGNAL(quit()));
+	connect(clearAction, SIGNAL(triggered(bool)), this, SLOT(clear()));
 	
 	QWidget * centralWidget = new QWidget(this);
 	centralWidget->setLayout(mainLayout);
 	setCentralWidget(centralWidget);
 }
 
-MainWindow::~MainWindow() {}
+MainWindow::~MainWindow() {
+	emit quit();
+}
 
 void MainWindow::computeAssignments() {
 	DistanceWeightConfig dwc;
@@ -197,7 +210,7 @@ void MainWindow::toggleBranch(BranchId brId) {
 	emit dataChanged();
 }
 
-void MainWindow::saveAssignments() {
+void MainWindow::save() {
 	std::cout << "Saving assignments" << std::endl;
 	QString fileName = QFileDialog::getSaveFileName(this, tr("Open destiation"), "/", tr("Text Files (*.txt)"));
 	std::ofstream out;
@@ -213,7 +226,23 @@ void MainWindow::saveAssignments() {
 	}
 }
 
-void MainWindow::loadFile() {
+void MainWindow::exportResults() {
+	std::cout << "Exporting assignments" << std::endl;
+	QString fileName = QFileDialog::getSaveFileName(this, tr("Open destiation"), "/", tr("Text Files (*.txt)"));
+	std::ofstream out;
+	out.open(fileName.toStdString());
+	if (out.is_open()) {
+		m_state->exportBranchAssignments(out);
+		out.close();
+	}
+	else {
+		QMessageBox msgBox;
+		msgBox.setText("Could not open file: " + fileName);
+		msgBox.exec();
+	}
+}
+
+void MainWindow::load() {
 	std::cout << "Load branches" << std::endl;
 	QString fileName = QFileDialog::getOpenFileName(this, tr("Open destiation"), "/", tr("Text Files (*.txt)"));
 	std::ifstream in;
@@ -227,6 +256,10 @@ void MainWindow::loadFile() {
 		msgBox.setText("Could not open file: " + fileName);
 		msgBox.exec();
 	}
+}
+
+void MainWindow::clear() {
+	m_state->clear();
 }
 
 void

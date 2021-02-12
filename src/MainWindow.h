@@ -39,11 +39,14 @@ public slots:
 	void computeAssignments();
 	void toggleBranch(BranchId brId);
 	void clearShownBranches();
-	void saveAssignments();
-	void loadFile();
+	void save();
+	void exportResults();
+	void load();
+	void clear();
 	void showTextInfo(QString const &);
 signals:
 	void dataChanged();
+	void quit();
 private slots:
 	void computationFinished();
 private://data stuff

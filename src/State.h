@@ -129,15 +129,17 @@ public:
 	void importFiles();
 public:
 	memgraph::Graph::NodeId closestNode(sserialize::spatial::GeoPoint const & gp) const;
-	std::vector<double> nodeDistances(memgraph::Graph::NodeId const & nId) const;
+	std::vector<double> nodeDistances(memgraph::Graph::NodeId const & nId, std::function<double(memgraph::Graph::Edge const &)>) const;
 	std::vector<Distance> branchDistance(BranchId const & branchId, DistanceWeightConfig const & dwc) const;
 	void computeBranchAssignments(DistanceWeightConfig const & dwc);
 public:
 	void writeBranchAssignments(std::ostream & out);
+	void exportBranchAssignments(std::ostream & out);
 public slots:
 	void createBranch(double lat, double lon, QString name, uint32_t employees);
 	void createBranch(double lat, double lon);
 	void createBranches(std::istream & data);
+	void clear();
 signals:
 	void dataChanged();
 	void textInfo(QString const & str);

@@ -2,6 +2,7 @@
 #include <osmtools/AreaExtractor.h>
 #include <osmtools/AreaExtractorFilters.h>
 #include <sserialize/algorithm/utilmath.h>
+#include <sserialize/strings/stringfunctions.h>
 #include <queue>
 #include <map>
 #include <random>
@@ -111,7 +112,7 @@ State::closestNode(sserialize::spatial::GeoPoint const & gp) const {
 }
 
 std::vector<double>
-State::nodeDistances(memgraph::Graph::NodeId const & nId) const {
+State::nodeDistances(memgraph::Graph::NodeId const & nId, std::function<double(memgraph::Graph::Edge const &)> weight) const {
 	using namespace memgraph;
 	constexpr double NoDistance = std::numeric_limits<double>::max();
 	std::vector<double> distance(graph.nodeCount(), NoDistance);
@@ -125,7 +126,6 @@ State::nodeDistances(memgraph::Graph::NodeId const & nId) const {
 			return !(distance < other.distance);
 		}
 	};
-	auto weight = [](Graph::Edge const & e) { return double(e.distance)/e.speed; };
 	std::priority_queue<QueueElement> pq;
 	pq.emplace(nId, 0);
 	while(pq.size()) {
@@ -137,8 +137,8 @@ State::nodeDistances(memgraph::Graph::NodeId const & nId) const {
 			for(auto eIt(graph.edgesBegin(qe.nId)), eEnd(graph.edgesEnd(qe.nId)); eIt != eEnd; ++eIt) {
 				auto const & edge = *eIt;
 				assert(edge.source == qe.nId);
-				if (qe.distance + weight(edge) < distance.at(edge.target)) {
-					pq.emplace(Graph::NodeId(edge.target), qe.distance + weight(edge));
+				if (auto nd = qe.distance + weight(edge); nd < distance.at(edge.target)) {
+					pq.emplace(Graph::NodeId(edge.target), nd);
 				}
 			}
 		}
@@ -151,7 +151,7 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 	Branch const & branch = branches.at(branchId.value);
 	using NodeId = memgraph::Graph::NodeId;
 	//First get the node distances
-	std::vector<double> nodeDist = nodeDistances(branch.nodeId);
+	std::vector<double> nodeDist = nodeDistances(branch.nodeId, [](memgraph::Graph::Edge const & e) { return double(e.distance)/e.speed; });
 	double reachable = std::count_if(nodeDist.begin(), nodeDist.end(), [](auto && x) { return x != std::numeric_limits<double>::max(); });
 	std::cout << "Branch " << branchId.value << " reaches " << reachable << "/" << nodeDist.size() << "="
 			<< reachable/nodeDist.size()*100 << '%' << " nodes" << std::endl;
@@ -419,12 +419,31 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 				mm_residentCosts.update(residentCosts.back());
 			}
 		};
+		bool allValid = std::count_if(branches.begin(), branches.end(), [&](auto && x) { return x.maxRegions < regionInfo.size(); }) > 0;
+		auto valid = [&](Resident const & r) {
+			if (allValid) {
+				return true;
+			}
+			std::vector<uint16_t> counts(branches.size(), 0);
+			for(auto const & x : r) {
+				counts.at(x) += 1;
+			}
+			for(std::size_t i(0); i < counts.size(); ++i) {
+				if (branches.at(i).maxRegions < counts.at(i)) {
+					return false;
+				}
+			}
+			return true;
+		};
 		//Select residents based on their cost relative to the best
 		//The best is selected with propability 1, the worst with probability 0
 		//The others are selected with probability (cost - worst)/(best - worst)
 		auto select = [&](Population const & p) -> Population {
 			Population result;
 			for(std::size_t i(0), s(residentCosts.size()); i < s; ++i) {
+				if (!valid(p.at(i))) { //remove invalid residents
+					continue;
+				}
 				double prob = 1-(residentCosts.at(i)-mm_residentCosts.min())/(mm_residentCosts.max() - mm_residentCosts.min());
 				if (u01d(rg) <= prob) {
 					result.push_back( p.at(i) );
@@ -488,15 +507,15 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 	case DistanceWeightConfig::BAM::Optimal:
 	{
 		//We map all weights to uint64_t with totalWeights mapping to std::numeric_limits<uint64_t>/2
-		double maxWeight = 0;
+		double totalWeight = 0;
 		for(auto const & x : branchDistances) {
 			for(auto const & y : x) {
-				maxWeight = std::max(maxWeight, y.value);
+				totalWeight += y.value;
 			}
 		}
-		emit_textInfo(QString("Max weight: %1").arg(maxWeight));
-		auto intWeight = [maxWeight](double v) -> int64_t {
-			int64_t result = (v/maxWeight) * double(std::numeric_limits<uint32_t>::max());
+		emit_textInfo(QString("Total weight: %1").arg(totalWeight));
+		auto intWeight = [totalWeight](double v) -> int64_t {
+			int64_t result = (v/totalWeight) * double(uint64_t(1) << 58);
 			if (v >= 1 && result == 0) {
 				throw std::runtime_error("Precision of uint32_t not high enough");
 			}
@@ -639,6 +658,21 @@ State::writeBranchAssignments(std::ostream & out) {
 }
 
 void
+State::exportBranchAssignments(std::ostream & out) {
+	std::shared_lock<std::shared_mutex> lck(dataMtx);
+	for(Branch const & branch : branches) {
+		std::string bn = branch.name.toStdString();
+		for(auto const & [rId, dist] : branch.assignedRegions) {
+			auto plz = regionInfo.at(rId.value()).plz;
+			if (plz < 10000) {
+				out << '0';
+			}
+			out << plz << '\t' << bn << '\t' << dist.value << '\n';
+		}
+	}
+}
+
+void
 State::createBranch(double lat, double lon, QString name, uint32_t employees) {
 	std::array<Qt::GlobalColor, 8> colors{
 		Qt::red,
@@ -674,24 +708,47 @@ State::createBranch(double lat, double lon) {
 void
 State::createBranches(std::istream & data) {
 	std::vector< std::tuple<double, double, QString, uint32_t> > tmp;
-	std::stringstream ls;
+	std::size_t lineNum = 0;
 	while (!data.eof() && data.good()) {
+		++lineNum;
 		std::string line;
 		std::getline(data, line);
 		if (!line.size()) {
 			continue;
 		}
-		ls << line;
+		auto sl = sserialize::split< std::vector<std::string> >(line, '\t');
+		if (sl.size() < 3) {
+			std::cerr << "Ignoring line " << lineNum << std::endl;
+			continue;
+		}
 		std::string name;
 		double lat, lon;
-		uint32_t employees;
-		ls >> name >> lat >> lon >> employees;
+		uint32_t employees = 1;
+		name = sl.at(0);
+		try {
+			lat = sserialize::toDouble(sl.at(1));
+			lon = sserialize::toDouble(sl.at(2));
+			if (sl.size() > 3) {
+				employees = std::stoi(sl.at(3));
+			}
+		}
+		catch (std::exception const & e) {
+			std::cerr << "Ignoring line " << lineNum << " due to exception: " << e.what() << std::endl;
+		}
 		//Ignore plz
+		tmp.emplace_back(lat, lon, QString::fromStdString(name), employees);
 	}
 	#pragma omp parallel for schedule(dynamic)
 	for(std::size_t i=0; i < tmp.size(); ++i) {
 		std::apply([this](auto &&... params) { createBranch(params...); }, tmp[i]);
 	}
+}
+
+void State::clear() {
+	std::unique_lock<std::shared_mutex> lck(dataMtx);
+	enabledBranches.clear();
+	branches.clear();
+	totalCost = 0;
 }
 
 void

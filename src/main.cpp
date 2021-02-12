@@ -42,7 +42,11 @@ int main(int argc, char ** argv) {
 
 	state->importFiles();
 
-	plz2branch::MainWindow mainWindow(state);
-	mainWindow.show();
+	auto mainWindow = new plz2branch::MainWindow(state);
+	mainWindow->setAttribute(Qt::WA_DeleteOnClose);
+	
+	QObject::connect(mainWindow, &plz2branch::MainWindow::quit, &app, &QApplication::quit, Qt::QueuedConnection);
+	
+	mainWindow->show();
 	return app.exec();
 }
