@@ -61,7 +61,7 @@ bool MarbleMap::MyGeometryLayer::render(Marble::GeoPainter* painter, Marble::Vie
 			Marble::GeoDataLatLonBox lb(bbox.maxLat(), bbox.minLat(), bbox.maxLon(), bbox.minLon(), Marble::GeoDataCoordinates::Degree);
 			painter->drawRect(lb.center(), lb.width(Marble::GeoDataCoordinates::Degree), lb.height(Marble::GeoDataCoordinates::Degree), true);
 			
-			auto msg = QString("plz=%1, br=%2, d=%3").arg(QString::number(state().regionInfo.at(rId.value()).plz), QString::number(branchId), QString::number(rDist.value));
+			auto msg = QString("plz=%1, br=%2, dt=%3, ds=%4").arg(QString::number(state().regionInfo.at(rId.value()).plz), QString::number(branchId), QString::number(rDist.time), QString::number(rDist.spatial));
 			painter->drawText(lb.center(), msg);
 		}
 	}

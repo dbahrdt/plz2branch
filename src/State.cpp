@@ -151,10 +151,11 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 	Branch const & branch = branches.at(branchId.value);
 	using NodeId = memgraph::Graph::NodeId;
 	//First get the node distances
-	std::vector<double> nodeDist = nodeDistances(branch.nodeId, [](memgraph::Graph::Edge const & e) { return double(e.distance)/e.speed; });
-	double reachable = std::count_if(nodeDist.begin(), nodeDist.end(), [](auto && x) { return x != std::numeric_limits<double>::max(); });
-	std::cout << "Branch " << branchId.value << " reaches " << reachable << "/" << nodeDist.size() << "="
-			<< reachable/nodeDist.size()*100 << '%' << " nodes" << std::endl;
+	std::vector<double> timeNodeDist = nodeDistances(branch.nodeId, [](memgraph::Graph::Edge const & e) -> double { return double(e.distance)/e.speed; });
+	std::vector<double> spatialNodeDist = nodeDistances(branch.nodeId, [](memgraph::Graph::Edge const & e) -> double { return e.distance; });
+	double reachable = std::count_if(timeNodeDist.begin(), timeNodeDist.end(), [](auto && x) { return x != std::numeric_limits<double>::max(); });
+	std::cout << "Branch " << branchId.value << " reaches " << reachable << "/" << timeNodeDist.size() << "="
+			<< reachable/timeNodeDist.size()*100 << '%' << " nodes" << std::endl;
 	std::vector<Distance> branchDistance(regionInfo.size());
 	
 	auto nodeSelector = [&](NodeId const & nid) {
@@ -170,9 +171,10 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 	switch (dwc.nodeWeightModel) {
 	case DistanceWeightConfig::NWM::Min:
 	{
-		std::vector<sserialize::AtomicMin<double>> distances(regionInfo.size());
+		std::vector<sserialize::AtomicMin<double>> timeD(regionInfo.size());
+		std::vector<sserialize::AtomicMin<double>> spatialD(regionInfo.size());
 		#pragma omp parallel for schedule(dynamic)
-		for(std::size_t i=0; i < nodeDist.size(); ++i) {
+		for(std::size_t i=0; i < timeNodeDist.size(); ++i) {
 			if (!nodeSelector(NodeId(i))) {
 				continue;
 			}
@@ -181,20 +183,23 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 				continue;
 			}
 			if (i == branch.nodeId) {
-				std::cout << "Node distance for branch " << branchId.value << ": " << nodeDist[i] << std::endl;
+				std::cout << "Node distance for branch " << branchId.value << ": " << timeNodeDist[i] << std::endl;
 			}
-			distances.at(nodeRegion.value()).update(nodeDist[i]);
+			timeD.at(nodeRegion.value()).update(timeNodeDist[i]);
+			spatialD.at(nodeRegion.value()).update(spatialNodeDist[i]);
 		}
 		for(std::size_t i(0), s(branchDistance.size()); i < s; ++i) {
-			branchDistance[i].value = distances[i].load();
+			branchDistance[i].time = timeD[i].load();
+			branchDistance[i].spatial = spatialD[i].load();
 		}
 	}
 	break;
 	case DistanceWeightConfig::NWM::Max:
 	{
-		std::vector<sserialize::AtomicMax<double>> distances(regionInfo.size());
+		std::vector<sserialize::AtomicMax<double>> timeD(regionInfo.size());
+		std::vector<sserialize::AtomicMax<double>> spatialD(regionInfo.size());
 		#pragma omp parallel for schedule(dynamic)
-		for(std::size_t i=0; i < nodeDist.size(); ++i) {
+		for(std::size_t i=0; i < timeNodeDist.size(); ++i) {
 			if (!nodeSelector(NodeId(i))) {
 				continue;
 			}
@@ -202,20 +207,23 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 			if (!nodeRegion.valid()) {
 				continue;
 			}
-			distances.at(nodeRegion.value()).update(nodeDist[i]);
+			timeD.at(nodeRegion.value()).update(timeNodeDist[i]);
+			spatialD.at(nodeRegion.value()).update(spatialNodeDist[i]);
 		}
 		for(std::size_t i(0), s(branchDistance.size()); i < s; ++i) {
-			branchDistance[i].value = distances[i].load();
+			branchDistance[i].time = timeD[i].load();
+			branchDistance[i].spatial = spatialD[i].load();
 		}
 	}
 	break;
 	case DistanceWeightConfig::NWM::Mean:
 	{
-		std::vector< std::atomic<double> > distances(regionInfo.size());
+		std::vector< std::atomic<double> > timeD(regionInfo.size());
+		std::vector< std::atomic<double> > spatialD(regionInfo.size());
 		std::vector< std::atomic<uint32_t> > numNodes(regionInfo.size());
 		
 		#pragma omp parallel for schedule(dynamic)
-		for(std::size_t i=0; i < nodeDist.size(); ++i) {
+		for(std::size_t i=0; i < timeNodeDist.size(); ++i) {
 			if (!nodeSelector(NodeId(i))) {
 				continue;
 			}
@@ -224,22 +232,25 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 			if (!nodeRegion.valid()) {
 				continue;
 			}
-			if (nodeDist.at(i) != std::numeric_limits<double>::max()) {
-				distances.at(nodeRegion.value()).fetch_add(nodeDist.at(i), std::memory_order_relaxed);
+			if (timeNodeDist.at(i) != std::numeric_limits<double>::max()) {
+				timeD.at(nodeRegion.value()).fetch_add(timeNodeDist.at(i), std::memory_order_relaxed);
+				spatialD.at(nodeRegion.value()).fetch_add(spatialNodeDist.at(i), std::memory_order_relaxed);
 				numNodes.at(nodeRegion.value()).fetch_add(1, std::memory_order_relaxed);
 			}
 		}
 		for(std::size_t i(0), s(branchDistance.size()); i < s; ++i) {
-			branchDistance[i].value = distances[i].load()/numNodes.at(i).load();
+			branchDistance[i].time = timeD[i].load()/numNodes.at(i).load();
+			branchDistance[i].spatial = spatialD[i].load()/numNodes.at(i).load();
 		}
 	}
 	break;
 	case DistanceWeightConfig::NWM::Median:
 	{
-		std::vector<sserialize::GuardedVariable<std::vector<double>>> distances(regionInfo.size());
+		std::vector<sserialize::GuardedVariable<std::vector<double>>> timeD(regionInfo.size());
+		std::vector<sserialize::GuardedVariable<std::vector<double>>> spatialD(regionInfo.size());
 		
 		#pragma omp parallel for schedule(dynamic)
-		for(std::size_t i=0; i < nodeDist.size(); ++i) {
+		for(std::size_t i=0; i < timeNodeDist.size(); ++i) {
 			if (!nodeSelector(NodeId(i))) {
 				continue;
 			}
@@ -248,14 +259,17 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 			if (!nodeRegion.valid()) {
 				continue;
 			}
-			auto nd = nodeDist.at(i);
+			auto nd = timeNodeDist.at(i);
+			auto sd = spatialNodeDist.at(i);
 			
 			if (nd != std::numeric_limits<double>::max()) {
-				distances.at(nodeRegion.value()).syncedWithoutNotify([&](auto & v) { v.push_back(nd); });
+				timeD.at(nodeRegion.value()).syncedWithoutNotify([&](auto & v) { v.push_back(nd); });
+				spatialD.at(nodeRegion.value()).syncedWithoutNotify([&](auto & v) { v.push_back(sd); });
 			}
 		}
 		for(std::size_t i(0), s(branchDistance.size()); i < s; ++i) {
-			branchDistance[i].value = sserialize::statistics::median(distances.at(i).unsyncedValue().begin(), distances.at(i).unsyncedValue().end(), double(0));
+			branchDistance[i].time = sserialize::statistics::median(timeD.at(i).unsyncedValue().begin(), timeD.at(i).unsyncedValue().end(), double(0));
+			branchDistance[i].spatial = sserialize::statistics::median(spatialD.at(i).unsyncedValue().begin(), spatialD.at(i).unsyncedValue().end(), double(0));
 		}
 	}
 	break;
@@ -264,7 +278,7 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 	{
 		RegionId brRId = node2Region.at(branch.nodeId);
 		if (brRId.valid()) {
-			std::cout << "Branch " << branchId.value << " is in plz " << regionInfo.at(brRId.value()).plz << " with distance " << branchDistance.at(brRId.value()).value  << std::endl;
+			std::cout << "Branch " << branchId.value << " is in plz " << regionInfo.at(brRId.value()).plz << " with distance " << branchDistance.at(brRId.value()).time  << std::endl;
 		}
 		else {
 			std::cout << "Branch " << branchId.value << " is outside of all known plz" << std::endl;
@@ -274,7 +288,7 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 	switch (dwc.regionWeightModel) {
 		case DistanceWeightConfig::RWM::Inhabitants:
 			for(std::size_t i(0), s(branchDistance.size()); i < s; ++i) {
-				branchDistance.at(i).value *= regionInfo.at(i).inhabitants;
+				branchDistance.at(i).time *= regionInfo.at(i).inhabitants;
 			}
 			break;
 		case DistanceWeightConfig::RWM::Equal:
@@ -284,7 +298,7 @@ State::branchDistance(BranchId const & branchId, DistanceWeightConfig const & dw
 	switch (dwc.branchWeightModel) {
 		case DistanceWeightConfig::BWM::Employees:
 			for(auto & x : branchDistance) {
-				x.value /= branch.employees;
+				x.time /= branch.employees;
 			}
 			break;
 		case DistanceWeightConfig::BWM::Equal:
@@ -304,7 +318,7 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 		for(std::size_t i = 0; i < branches.size(); ++i) {
 			Branch const & branch = branches.at(i);
 			branchDistances.at(i) = branchDistance(BranchId{.value=uint32_t(i)}, dwc);
-			double reachable = std::count_if(branchDistances.at(i).begin(), branchDistances.at(i).end(), [](auto && x) { return x.value != std::numeric_limits<double>::max();});
+			double reachable = std::count_if(branchDistances.at(i).begin(), branchDistances.at(i).end(), [](auto && x) { return x.time != std::numeric_limits<double>::max();});
 			std::cout << "Branch " << i << " reaches " << reachable << "/" << branchDistances.at(i).size() << "="
 			<< reachable/branchDistances.at(i).size()*100 << '%' << " plz" << std::endl;
 			emit_textInfo(QString("Finished computing distances for branch %1").arg(i));
@@ -328,18 +342,19 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 			double bestDist = std::numeric_limits<double>::max();
 			uint32_t bestId = std::numeric_limits<uint32_t>::max();
 			for(uint32_t brId(0); brId < branches.size(); ++brId) {
-				double branchPlzDist = branchDistances.at(brId).at(plzId).value;
+				double branchPlzDist = branchDistances.at(brId).at(plzId).time;
 				if (branchPlzDist < bestDist) {
 					bestId = brId;
 					bestDist = branchPlzDist;
 				}
 			}
 			if (bestId != std::numeric_limits<uint32_t>::max()) {
-				branches.at(bestId).assignedRegions.emplace_back(RegionId{plzId}, Distance{.value=bestDist});
+				assert(branchDistances.at(bestId).at(plzId).time == bestDist);
+				branches.at(bestId).assignedRegions.emplace_back(RegionId{plzId}, branchDistances.at(bestId).at(plzId));
 			}
 			else {
 				std::cout << "Could not find branch for plz " << regionInfo.at(plzId).plz << std::endl;
-				std::cout << "Branch 0 distance to plz: " << branchDistances.at(0).at(plzId).value << std::endl;
+				std::cout << "Branch 0 distance to plz: " << branchDistances.at(0).at(plzId).time << std::endl;
 			}
 	// 		pinfo(plzId);
 		}
@@ -358,6 +373,9 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 		Population pop;
 		sserialize::MinMax<double> mm_residentCosts;
 		std::vector<double> residentCosts;
+		auto less = [&](Distance const & a, Distance const & b) {
+			return a.time < b.time;
+		};
 		auto mutate = [&](Resident & r, double mutationRate) -> Resident {
 			Resident result;
 			for(auto & x : r) {
@@ -375,7 +393,7 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 			for(std::size_t i(0), s(r1.size()); i < s; ++i) {
 				Distance const & cost1 = branchDistances.at(r1.at(i)).at(i);
 				Distance const & cost2 = branchDistances.at(r2.at(i)).at(i);
-				if (cost1 < cost2) {
+				if (less(cost1, cost2)) {
 					child.push_back(r1.at(i));
 				}
 				else {
@@ -387,7 +405,7 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 		auto rcost = [&](Resident const & r) {
 			double cost = 0;
 			for(std::size_t rId(0); rId < regionInfo.size(); ++rId) {
-				cost += branchDistances.at(r.at(rId)).at(rId).value;
+				cost += branchDistances.at(r.at(rId)).at(rId).time;
 			}
 			return cost;
 		};
@@ -510,7 +528,7 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 		double totalWeight = 0;
 		for(auto const & x : branchDistances) {
 			for(auto const & y : x) {
-				totalWeight += y.value;
+				totalWeight += y.time;
 			}
 		}
 		emit_textInfo(QString("Total weight: %1").arg(totalWeight));
@@ -558,7 +576,7 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 				auto const & branch_v = branch_nodes.at(brId);
 				auto e = boost::add_edge(branch_v, region_v, g).first;
 				branch_region_edges.push_back(e);
-				weights[e] = intWeight( branchDistances.at(brId).at(rId).value );
+				weights[e] = intWeight( branchDistances.at(brId).at(rId).time );
 				capacities[e] = 1;
 				//reverse edge
 				auto re = boost::add_edge(region_v, branch_v, g).first;
@@ -630,7 +648,7 @@ State::computeBranchAssignments(DistanceWeightConfig const & dwc) {
 	for(auto & br : branches) {
 		br.cost = 0;
 		for(auto const & [_, dist] : br.assignedRegions) {
-			br.cost += dist.value;
+			br.cost += dist.time;
 		}
 		totalCost += br.cost;
 	}
@@ -660,6 +678,8 @@ State::writeBranchAssignments(std::ostream & out) {
 void
 State::exportBranchAssignments(std::ostream & out) {
 	std::shared_lock<std::shared_mutex> lck(dataMtx);
+	auto prec = out.precision(std::numeric_limits<double>::digits10);
+	out << "PLZ\tBranch\tDistance [m]\n";
 	for(Branch const & branch : branches) {
 		std::string bn = branch.name.toStdString();
 		for(auto const & [rId, dist] : branch.assignedRegions) {
@@ -667,9 +687,10 @@ State::exportBranchAssignments(std::ostream & out) {
 			if (plz < 10000) {
 				out << '0';
 			}
-			out << plz << '\t' << bn << '\t' << dist.value << '\n';
+			out << plz << '\t' << bn << '\t' << dist.spatial/1000 << '\n';
 		}
 	}
+	out.precision(prec);
 }
 
 void
